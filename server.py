@@ -4,6 +4,7 @@ import numpy as np
 import insightface
 from google.cloud import vision
 from pdf2image import convert_from_bytes
+import uuid
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -38,12 +39,12 @@ async def recognize_faces(image):
     img = np.array(image)
     return await loop.run_in_executor(executor, detect_faces, img)
 
-def detect_faces(img):
-    """Detects and crops face in an image and saves it with bounding box."""
+def detect_faces(img, save_dir="faces"):
+    """Detects and crops face in an image and saves it with a unique filename."""
     faces = face_model.get(img)
     if not faces:
         return None
-    
+
     face = faces[0]
     bbox = face.bbox.astype(int)
     x1, y1, x2, y2 = bbox
@@ -52,11 +53,22 @@ def detect_faces(img):
     fixed_width, fixed_height = 172, 216
     x1, y1 = max(0, center_x - fixed_width // 2) + 3, max(0, center_y - fixed_height // 2) - 4
     x2, y2 = min(img.shape[1], x1 + fixed_width), min(img.shape[0], y1 + fixed_height)
-    
+
     face_crop = img[y1:y2, x1:x2]
     face_crop_bgr = cv2.cvtColor(face_crop, cv2.COLOR_RGB2BGR)
-    cv2.imwrite("face_output.jpg", face_crop_bgr) # 1
-    cv2.imwrite("face_output.png", face_crop_bgr) # 2
+
+    # Ensure save directory exists
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Generate a unique filename
+    unique_id = uuid.uuid4().hex
+    jpg_path = os.path.join(save_dir, f"face_{unique_id}.jpg")
+    png_path = os.path.join(save_dir, f"face_{unique_id}.png")
+
+    cv2.imwrite(jpg_path, face_crop_bgr)
+    cv2.imwrite(png_path, face_crop_bgr)
+
+    return jpg_path, png_path  # Return file paths for further use
 
 @app.post("/process-pdf/")
 async def process_pdf(file: UploadFile = File(...)):
