@@ -80,42 +80,12 @@ async def process_pdf(
     combined_text = " ".join(ocr_results)
     is_verified = verify_text(combined_text)
 
-    if is_verified == 0:
+    if is_verified == False:
         return {"error": "Not a school record."}
     
     try:
         # PDF 처리 및 텍스트 추출
         extracted_text = ocr_results
-        
-        # 추출된 텍스트를 문장 단위로 분리
-        sentences = text_split(extracted_text)
-        
-        # 문장을 장/단점으로 분석
-        analysis_result = text_prosCons(sentences)
-        
-        return JSONResponse(
-            content={
-                "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
-                "advantages": analysis_result["장점"],
-                "disadvantages": analysis_result["단점"]
-            },
-            status_code=200
-        )
-    except Exception as e:
-        return JSONResponse(
-            content={
-                "message": f"PDF 처리 중 오류 발생: {str(e)}"
-            },
-            status_code=500
-        )
-
-@app.post("/test")
-async def test(
-    file: UploadFile = File(...)
-):
-    try:
-        # PDF 처리 및 텍스트 추출
-        extracted_text = "추출된 텍스트 예시"  # 실제 PDF 처리 결과로 대체해야 함
         
         # 추출된 텍스트를 문장 단위로 분리
         sentences = text_split(extracted_text)
