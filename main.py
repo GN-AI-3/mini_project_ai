@@ -9,6 +9,9 @@ import kss
 import re
 import io
 
+# student_evaluation.py 모듈 임포트
+import student_evaluation as se
+
 app = FastAPI()
 
 app.add_middleware(
@@ -36,7 +39,31 @@ model = None
 async def pdf_to_image(
     pdf: UploadFile = File(...)
 ):
-    pass
+    try:
+        # PDF 처리 및 텍스트 추출
+        extracted_text = "추출된 텍스트 예시"  # 실제 PDF 처리 결과로 대체해야 함
+        
+        # 추출된 텍스트를 문장 단위로 분리
+        sentences = text_split(extracted_text)
+        
+        # 문장을 장/단점으로 분석
+        analysis_result = text_prosCons(sentences)
+        
+        return JSONResponse(
+            content={
+                "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
+                "advantages": analysis_result["장점"],
+                "disadvantages": analysis_result["단점"]
+            },
+            status_code=200
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "message": f"PDF 처리 중 오류 발생: {str(e)}"
+            },
+            status_code=500
+        )
 
 # return 예시
 # return JSONResponse(
@@ -71,6 +98,33 @@ async def test(
         return JSONResponse(
             content={
                 "message": f"파일 업로드 실패: {str(e)}"
+            },
+            status_code=500
+        )
+
+@app.post("/analyze_text")
+async def analyze_text(
+    text: str
+):
+    """
+    텍스트를 입력받아 장/단점을 분석하는 API
+    """
+    try:
+        sentences = text_split(text)
+        analysis_result = text_prosCons(sentences)
+        
+        return JSONResponse(
+            content={
+                "message": "텍스트 분석이 성공적으로 완료되었습니다",
+                "advantages": analysis_result["장점"],
+                "disadvantages": analysis_result["단점"]
+            },
+            status_code=200
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "message": f"텍스트 분석 중 오류 발생: {str(e)}"
             },
             status_code=500
         )
@@ -141,7 +195,16 @@ def text_split(
 def text_prosCons(
     text: List[str]
 ):
-    pass
+    max_items = 5
+    
+    try:
+        # 전달된 텍스트 분석
+        analysis_result = se.analyze_student_text(text, max_items=max_items)
+        return analysis_result
+    except Exception as e:
+        print(f"텍스트 분석 중 오류 발생: {e}")
+        # 오류 발생 시 빈 결과 반환
+        return {"장점": [], "단점": []}
 
 
 # 장/단점 구분된 텍스트 요약

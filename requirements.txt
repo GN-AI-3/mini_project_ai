@@ -2,5 +2,7 @@ fastapi
 uvicorn
 python-multipart
 Pillow
+fasttext-wheel
+numpy
 # pykospacing
 kss

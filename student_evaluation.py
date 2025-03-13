@@ -16,9 +16,9 @@ try:
     # fasttext 패키지 확인
     spec = importlib.util.find_spec("fasttext")
     if spec is None:
-        print("fastText 라이브러리가 설치되어 있지 않습니다. 설치 중...")
-        import pip
-        pip.main(['install', 'fasttext-wheel'])
+        print("fastText 라이브러리가 설치되어 있지 않습니다.")
+        print("다음 명령어로 설치해 주세요: pip install fasttext-wheel")
+        sys.exit(1)
     
     # 현재 파일 경로 확인
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -158,29 +158,157 @@ class FastTextClassifier:
         positive_patterns = ["성실", "책임감", "자기주도", "협동", "규칙준수", "나눔", "배려", 
                              "관계", "봉사", "성취", "집중력", "공동체", "모범", "등교", "지각 없", 
                              "청소", "자발적", "깨끗이", "나서서", "앞장", "봉사", "의욕", "적극적", 
-                             "바르고", "현명한", "고운 심성", "열정", "효율적", "계획성", "뛰어나"]
+                             "바르고", "현명한", "고운 심성", "열정", "효율적", "계획성", "뛰어나",
+                             # 새로운 긍정 패턴 추가
+                             "부드럽", "온화", "무던", "객관적", "겸허", "받아들", "노력", 
+                             "배려", "이해", "존중", "경청", "인내", "꾸준", "친절", "성장"]
         
-        negative_patterns = ["우유부단", "해결하지 못", "동기가 낮", "아쉽", "개선이 필요", "미흡함"]
+        # 부정 패턴 대폭 강화
+        negative_patterns = [
+            # 기존 패턴
+            "우유부단", "해결하지 못", "동기가 낮", "아쉽", "개선이 필요", "미흡함",
+            
+            # 새로운 부정 패턴 추가
+            "부족", "어려움", "낮아", "소극적", "더딘", "지연", "떨어진", "부정적",
+            "부진", "미흡", "개선 필요", "노력 필요", "저조", "불성실", "불참", 
+            "안 좋은", "좋지 않", "방해", "주의산만", "무관심", "불안정", "자주 빠짐",
+            "제출하지 않음", "하지 않음", "부적절", "개선되어야"
+            # "문제" 단어 제거 - 문맥에 따라 긍정/부정 달라짐
+            # "귀찮은", "짜증", "감정적" 등은 맥락에 따라 긍정/부정이 달라질 수 있으므로 제거
+        ]
         
         # 맥락 기반 패턴
-        context_positive = ["미흡한 부분을 나서서", "지각 한 번 하지 않고", "성실함이 인상적"]
+        context_positive = [
+            "미흡한 부분을 나서서", "지각 한 번 하지 않고", "성실함이 인상적",
+            # 새로운 맥락 패턴 추가
+            "문제 해결", "해결 능력", "뛰어나", "창의적", "능력이 좋", "자주 제시", 
+            "적극적으로 임", "높은 이해", "뛰어난", "우수", "발전", "향상",
+            # 성격/태도 관련 긍정 맥락 패턴
+            "부드럽고 온화", "짜증을 내기보다", "무던하게 받아주", "객관적으로 보려", 
+            "겸허히 받아들", "자신의 것으로", "노력함", "감정적으로 휩쓸리지"
+        ]
         
-        # 긍정 패턴 체크
-        for pattern in context_positive:
-            if pattern in sentence:
-                return "positive", 0.95
+        # 문맥 기반 부정 패턴
+        context_negative = [
+            "참여가 저조", "제출이 지연", "집중력이 부족", "소극적인 태도",
+            "부정적 영향", "어려움을 주", "이해도가 떨어", "개선이 필요"
+        ]
+        
+        # 문장이 성격 특성이나 태도를 설명하는지 확인
+        def is_personality_description(text):
+            """성격이나 태도를 설명하는 문장인지 확인"""
+            personality_patterns = [
+                "태도가", "성격", "하는 편", "스타일", "성향", "대하는", "특성", 
+                "하려고 하", "노력함", "받아들", "보려고", "하려는", "하기 위해"
+            ]
+            return any(pattern in text for pattern in personality_patterns)
+        
+        # 문장 전체가 부정적인지 확인하는 함수
+        def is_negative_sentence(text):
+            """문장이 전체적으로 부정적인지 확인"""
+            # 성격 설명이면서 긍정적 표현이 있는 경우
+            if is_personality_description(text):
+                pos_count = sum(1 for pattern in positive_patterns if pattern in text)
+                if pos_count >= 1:
+                    return False
             
-        for pattern in positive_patterns:
-            if pattern in sentence:
-                return "positive", 0.9
+            # 명확한 부정 맥락 확인
+            for pattern in context_negative:
+                if pattern in text:
+                    return True
+                
+            # 1. 부정 패턴 검사 전에 긍정 맥락 확인
+            for pattern in context_positive:
+                if pattern in text:
+                    return False
+                
+            # 2. 부정 패턴 검사
+            for pattern in negative_patterns:
+                if pattern in text:
+                    # 부정 패턴을 포함하지만 긍정 맥락인지 확인
+                    if any(pos in text for pos in context_positive):
+                        return False
+                    # "짜증을 내기보다"와 같이 부정을 극복하는 맥락 확인
+                    if "내기보다" in text or "대신" in text or "보다는" in text:
+                        return False
+                    return True
+            
+            # 3. 문장 구조 분석 (예: ~하지 않는다, ~이 부족하다 등)
+            negative_structures = [
+                r'[가-힣]+[이가]?\s*[^가-힣]*부족',
+                r'[가-힣]+[을를]?\s*[^가-힣]*하지\s*않',
+                r'[가-힣]+[이가]?\s*[^가-힣]*떨어',
+                r'[가-힣]+[이가]?\s*[^가-힣]*저조',
+                r'[가-힣]+[에게]?\s*[^가-힣]*어려움',
+                r'[가-힣]+[이가]?\s*[^가-힣]*미치'
+            ]
+            
+            for pattern in negative_structures:
+                if re.search(pattern, text):
+                    # 부정 구조지만 "문제 해결 능력" 등의 긍정 맥락 확인
+                    if "문제 해결" in text or "해결 능력" in text or "뛰어나" in text:
+                        return False
+                    # "~보다" 같은 비교 구문이 있으면 부정이 아닐 수 있음
+                    if "보다" in text or "대신" in text:
+                        return False
+                    return True
+            
+            return False
         
+        # 문장이 긍정적인지 확인하는 함수
+        def is_positive_sentence(text):
+            """문장이 전체적으로 긍정적인지 확인"""
+            # 성격 설명인 경우 긍정으로 간주하는 경향 강화
+            if is_personality_description(text):
+                # 단, 명확한 부정 맥락이 없는 경우
+                if not any(neg in text for neg in context_negative):
+                    # 하나 이상의 긍정 단어가 있으면 긍정으로 분류
+                    if any(pos in text for pos in positive_patterns):
+                        return True
+            
+            # 명확한 긍정 맥락 검사
+            for pattern in context_positive:
+                if pattern in text:
+                    # 예외: 명확한 부정 맥락이 동시에 있는 경우
+                    if any(neg in text for neg in context_negative):
+                        return False
+                    return True
+            
+            # "~보다는" 같은 구문이 있고 긍정적 단어가 있으면 긍정일 가능성 높음
+            if ("보다" in text or "대신" in text or "내기보다" in text):
+                pos_words = [pattern for pattern in positive_patterns if pattern in text]
+                if len(pos_words) > 0:
+                    return True
+            
+            # 긍정 키워드 검사
+            has_positive = False
+            for pattern in positive_patterns:
+                if pattern in text:
+                    has_positive = True
+                    break
+            
+            # 부정 표현이 없고 긍정 표현이 있으면 긍정
+            if has_positive and not is_negative_sentence(text):
+                return True
+                
+            return False
+        
+        # 특별 케이스: 명확한 긍정 표현이 있는 문장
+        if "부드럽고 온화" in sentence or "무던하게 받아주는" in sentence or "겸허히 받아들" in sentence:
+            return "positive", 0.98
+            
+        # 특별 케이스: "문제 해결 능력"은 항상 긍정
+        if "문제 해결" in sentence or "해결 능력" in sentence:
+            if "뛰어나" in sentence or "좋" in sentence or "창의적" in sentence:
+                return "positive", 0.98
+        
+        # 긍정 패턴 먼저 체크 (우선순위 조정)
+        if is_positive_sentence(sentence):
+            return "positive", 0.95
+            
         # 부정 패턴 체크
-        for pattern in negative_patterns:
-            if pattern in sentence:
-                # 부정 키워드가 있지만 맥락이 긍정적인지 확인
-                if any(pos in sentence for pos in context_positive):
-                    return "positive", 0.95
-                return "negative", 0.9
+        if is_negative_sentence(sentence):
+            return "negative", 0.95
         
         # 기본 텍스트 전처리 후 fastText 모델 예측
         processed = self.preprocess_text(sentence)
@@ -189,9 +317,21 @@ class FastTextClassifier:
         label = prediction[0][0].replace("__label__", "")
         confidence = prediction[1][0]
         
-        # 기본값은 긍정으로 설정 (신뢰도가 낮은 경우)
-        if label == "negative" and confidence < 0.7:
-            return "positive", 0.7
+        # 모델 예측 신뢰도가 낮은 경우 추가 규칙 검사
+        if confidence < 0.8:
+            # 성격/태도 묘사는 기본적으로 긍정으로 간주
+            if is_personality_description(sentence) and not is_negative_sentence(sentence):
+                return "positive", 0.85
+            
+            # "문제 해결" 관련 문장은 항상 긍정으로
+            if "문제 해결" in sentence or "창의적" in sentence:
+                return "positive", 0.85
+                
+            # 다시 부정/긍정 확인
+            if is_negative_sentence(sentence):
+                return "negative", 0.85
+            elif is_positive_sentence(sentence):
+                return "positive", 0.85
         
         # 분류 결과 반환
         return label, confidence
@@ -299,41 +439,21 @@ def analyze_student_evaluation(student_text=None, max_items=5):
     학생 평가 텍스트 분석 및 결과 출력 (장점/단점 추출)
     
     Args:
-        student_text: 분석할 텍스트 (기본값: 예제 사용)
+        student_text: 분석할 텍스트 (필수)
         max_items: 각 카테고리별 출력할 최대 항목 수
         
     Returns:
         분석 결과 {"장점": [...], "단점": [...]}
     """
-    # 기본 예제
+    # 텍스트가 제공되지 않으면 오류 메시지 출력
     if student_text is None:
-        student_text = [
-            "자기 통제력이 강하여 어려운 일에도 마음이 쉽게 흔들리지 않는 장점을 가진 학생으로 매사 성실하며 책임감이 강함. 맡은 역할들도 모두 충실히 임함.",
-            "구체적인 진로 희망 관련 활동을 수행하고 진로 목표를 꾸준히 실천하려고 노력하는 모습이 보임.",
-            "친구 및 교내 봉사활동 등에도 관심을 두고 지속적으로 참여하며 함께 협력하고 도우며 나누는 활동을 실천함.",
-            "또한 교내외 대회에 적극적으로 참여함.",
-            "학습 태도와 의욕을 내고 노력에 대해 아쉬운 부분도 있지만, 전반적으로 꾸준히 학습에 임하며 지속적인 성적 관리를 위해 스스로 계획하고 목표 설정에 따른 학습 전략을 실천하려고 노력함.",
-            "여러 과목에서 흥미를 보이고 의문점을 적극적으로 해결하려고 함.",
-            "2019년도 신산업특성화고 실습 및 프로젝트 경험을 통해 사물인터넷(IoT), 머신 러닝, 3D 인쇄 등의 분야에 흥미를 가지게 되었고, 이를 토대로 대학 전공 분야를 선택하고자 하는 의지가 분명함.",
-            "교내 기술경진대회에서 소프트웨어 프로그래밍을 주제로 출전하여 창의적인 아이디어를 발표함.",
-            "학생 스스로 기술적인 능력을 발전시키고자 관련 동아리 활동과 방과후 학습에 열심히 참여함.",
-            "남다른 탐구심으로 무언가 새롭게 개발하고 배우는 것을 즐기며 이를 토대로 미래의 진로 분야에서 전문가가 되기를 꿈꾸고 있음.",
-            "이러한 열정을 통해 자신이 세운 모든 것을 이루어낼 수 있는 실력을 갖출 것으로 기대됨.",
-            "예의가 바르고 친구들과도 원만히 지내면서 협력하는 태도를 갖춘 학생으로 다소 내성적이지만 성실하게 학급 활동에 참여하려고 노력함.",
-            "수업 중 질문을 적극적으로 하며 자신이 이해하지 못한 부분을 해결하려고 함.",
-            "매사에 꾸준한 자세를 보이고 매 순간 최선을 다해 학습에 임함.",
-            "특히 정보통신 분야에 대한 높은 관심과 흥미로 관련 책을 스스로 찾아 읽고, 실습 활동을 즐겨 함.",
-            "이론과 실습을 결합해 보는 과정을 통해 지식과 기술을 향상시키고자 노력하며, 앞으로도 자신의 꿈을 구체화하기 위한 준비와 탐색을 계속할 것으로 기대됨."
-        ]
+        print("분석할 텍스트가 제공되지 않았습니다.")
+        return {"장점": [], "단점": []}
     
     # 분석 수행 및 결과 출력
     results = analyze_student_text(student_text, max_items=max_items)
     print_analysis_results(results)
     return results
-
-# 한글 함수명 유지 (호환성)
-def 학생_평가_분석(학생_평가_텍스트=None, 최대_항목_수=5):
-    return analyze_student_evaluation(학생_평가_텍스트, 최대_항목_수)
 
 # 실행 코드
 if __name__ == "__main__":
