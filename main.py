@@ -4,6 +4,7 @@ from pykospacing import Spacing
 from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from transformers import pipeline
 import os
 import kss
 import re
@@ -24,8 +25,10 @@ app.add_middleware(
 # 모델은 전역에서 선언
 #######################################################################################################
 
-model = None
-
+model_text_style = pipeline(
+    'text2text-generation',
+    model='heegyu/kobart-text-style-transfer'
+)
 
 #######################################################################################################
 # API 설정
@@ -150,6 +153,24 @@ def summarizeProsCons(
     prosCons: list[str]
 ):
     pass
+
+
+# 요약된 텍스트 구어체로 변경
+def text_to_speech(
+    prosCons: list[str]
+):
+    # styles = ['구어체','안드로이드','아재','채팅',
+    # '초등학생','이모티콘','enfp','신사','할아버지','할머니','중학생',
+    # '왕','나루토','선비','소심한','번역기']
+
+    style = ['구어체']
+    converted_texts = []
+
+    for txt in prosCons:
+        input_text = f"{style} 말투로 변환:{txt}"
+        out = model_text_style(input_text, max_length=128)
+        converted_texts.append(out[0]['generated_text'])
+    return converted_texts
 
 
 # 이미지 카툰화
