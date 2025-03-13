@@ -1,5 +1,5 @@
 """
-fastText 기반 학생 평가 분석기 - 함수화된 버전 (쉬운 호출 인터페이스 제공)
+fastText 기반 학생 평가 분석기
 """
 
 import re
@@ -7,7 +7,6 @@ import os
 import sys
 import numpy as np
 import tempfile
-from konlpy.tag import Mecab  # 한국어 형태소 분석기 (설치 필요)
 
 # fastText 라이브러리 임포트 - 모듈 충돌 방지를 위한 수정
 try:
@@ -94,12 +93,6 @@ class FastTextClassifier:
         self.model_path = os.path.join(self.data_dir, 'fasttext_student_eval.bin')
         self.train_data_path = os.path.join(self.data_dir, 'train_data.txt')
         
-        # 형태소 분석기 초기화
-        try:
-            self.mecab = Mecab()
-        except:
-            self.mecab = None
-        
         # 예시 문장 데이터 (핵심만 유지)
         self.positive_examples = [
             "성실하고 책임감 있는 태도로 학업에 임함",
@@ -151,14 +144,9 @@ class FastTextClassifier:
             print(f"모델 훈련 중 오류 발생: {e}")
     
     def preprocess_text(self, text):
-        """텍스트 전처리 (형태소 분석 등)"""
-        if self.mecab is not None:
-            try:
-                tokens = self.mecab.morphs(text)
-                return ' '.join(tokens)
-            except:
-                return text
-        return text
+        """텍스트 전처리 (단순 공백 기반 토큰화)"""
+        # 단순한 공백 기반 토큰화로 대체
+        return ' '.join(text.split())
     
     def classify_sentence(self, sentence):
         """문장 분류 (긍정/부정)"""
@@ -194,7 +182,7 @@ class FastTextClassifier:
                     return "positive", 0.95
                 return "negative", 0.9
         
-        # 형태소 분석 후 fastText 모델 예측
+        # 기본 텍스트 전처리 후 fastText 모델 예측
         processed = self.preprocess_text(sentence)
         prediction = self.model.predict(processed)
         
@@ -298,12 +286,13 @@ def print_analysis_results(results):
     print("\n=== 학생 평가 분석 결과 ===")
     
     print("\n[장점]")
-    for advantage in results["장점"]:
-        print(f"• {advantage}")
+    for i, advantage in enumerate(results["장점"], 1):
+        # 긴 문장은 80자 기준으로 줄바꿈하여 출력
+        print(f"{i}. {advantage}")
         
     print("\n[단점]")
-    for disadvantage in results["단점"]:
-        print(f"• {disadvantage}")
+    for i, disadvantage in enumerate(results["단점"], 1):
+        print(f"{i}. {disadvantage}")
 
 def analyze_student_evaluation(student_text=None, max_items=5):
     """
@@ -319,12 +308,22 @@ def analyze_student_evaluation(student_text=None, max_items=5):
     # 기본 예제
     if student_text is None:
         student_text = [
-            '생활방식이 건강하고 심성이 고운 학생으로 늘 긍정적으로 생활하려는 모습이 돋보임.',
-            '바르고 현명한 생각과 실천 력, 고운 심성을 두루 갖추고 학습 의욕 및 자세가 적극적인 학생임.',
-            '수업 시간에 교사와 눈을 마주치거나 질문에 대답하면서 적극적으로 수업에 임하기 위해 노력함.',
-            '자기 관리 능력이 뛰어나 자신이 정한 목표에 따라 계획성 있고, 효율적으로 시간을 관리함.',
-            '항상 아침 일찍 등교하여 지각 한 번 하지 않고, 타종에 따라 자리에 착석하여 다음 수업을 준비함.',
-            '늘 청소 마무리를 자발적으로 하거나 미흡한 부분을 나서서 깨끗이 정리함.'
+            "자기 통제력이 강하여 어려운 일에도 마음이 쉽게 흔들리지 않는 장점을 가진 학생으로 매사 성실하며 책임감이 강함. 맡은 역할들도 모두 충실히 임함.",
+            "구체적인 진로 희망 관련 활동을 수행하고 진로 목표를 꾸준히 실천하려고 노력하는 모습이 보임.",
+            "친구 및 교내 봉사활동 등에도 관심을 두고 지속적으로 참여하며 함께 협력하고 도우며 나누는 활동을 실천함.",
+            "또한 교내외 대회에 적극적으로 참여함.",
+            "학습 태도와 의욕을 내고 노력에 대해 아쉬운 부분도 있지만, 전반적으로 꾸준히 학습에 임하며 지속적인 성적 관리를 위해 스스로 계획하고 목표 설정에 따른 학습 전략을 실천하려고 노력함.",
+            "여러 과목에서 흥미를 보이고 의문점을 적극적으로 해결하려고 함.",
+            "2019년도 신산업특성화고 실습 및 프로젝트 경험을 통해 사물인터넷(IoT), 머신 러닝, 3D 인쇄 등의 분야에 흥미를 가지게 되었고, 이를 토대로 대학 전공 분야를 선택하고자 하는 의지가 분명함.",
+            "교내 기술경진대회에서 소프트웨어 프로그래밍을 주제로 출전하여 창의적인 아이디어를 발표함.",
+            "학생 스스로 기술적인 능력을 발전시키고자 관련 동아리 활동과 방과후 학습에 열심히 참여함.",
+            "남다른 탐구심으로 무언가 새롭게 개발하고 배우는 것을 즐기며 이를 토대로 미래의 진로 분야에서 전문가가 되기를 꿈꾸고 있음.",
+            "이러한 열정을 통해 자신이 세운 모든 것을 이루어낼 수 있는 실력을 갖출 것으로 기대됨.",
+            "예의가 바르고 친구들과도 원만히 지내면서 협력하는 태도를 갖춘 학생으로 다소 내성적이지만 성실하게 학급 활동에 참여하려고 노력함.",
+            "수업 중 질문을 적극적으로 하며 자신이 이해하지 못한 부분을 해결하려고 함.",
+            "매사에 꾸준한 자세를 보이고 매 순간 최선을 다해 학습에 임함.",
+            "특히 정보통신 분야에 대한 높은 관심과 흥미로 관련 책을 스스로 찾아 읽고, 실습 활동을 즐겨 함.",
+            "이론과 실습을 결합해 보는 과정을 통해 지식과 기술을 향상시키고자 노력하며, 앞으로도 자신의 꿈을 구체화하기 위한 준비와 탐색을 계속할 것으로 기대됨."
         ]
     
     # 분석 수행 및 결과 출력
