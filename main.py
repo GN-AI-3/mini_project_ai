@@ -2,20 +2,31 @@ from fastapi import FastAPI, UploadFile, File
 from typing import List
 from pykospacing import Spacing
 from PIL import Image, ImageDraw, ImageFont
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  # 한 번만 임포트
 from fastapi.responses import JSONResponse
+from transformers import pipeline
 import os
 import kss
 import re
 import io
-import torch
-from fastapi.responses import StreamingResponse
-from io import BytesIO
-from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionPipeline
-import numpy as np
+
+# student_evaluation.py 모듈 임포트
+import student_evaluation as se
+import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import cv2
-import mediapipe as mp
+import numpy as np
+from google.cloud import vision
+from pdf2image import convert_from_bytes
+from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionPipeline
+import insightface
+
+
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
+
 app = FastAPI()
+executor = ThreadPoolExecutor(max_workers=4)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,148 +36,153 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Stable Diffusion 모델 로딩
-pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
-pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
- 
-# 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
-makeImage = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
-makeImage.to("cuda") 
-# MediaPipe Selfie Segmentation 설정
-mp_selfie_segmentation = mp.solutions.selfie_segmentation
-
-
 ####################################################################################################### 
 # 모델 선언
 # 모델은 전역에서 선언
 #######################################################################################################
 
-model = None
+model_text_style = pipeline(
+    'text2text-generation',
+    model='heegyu/kobart-text-style-transfer'
+)
 
+vision_client = vision.ImageAnnotatorClient()
 
+face_model = insightface.app.FaceAnalysis(providers=['CUDAExecutionProvider'])
+face_model.prepare(ctx_id=0)
+
+VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
+
+# Stable Diffusion 모델 로딩
+pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
+pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
+
+# 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
+makeImage = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
+makeImage.to("cuda") 
+
+# MediaPipe Selfie Segmentation 설정
+mp_selfie_segmentation = mp.solutions.selfie_segmentation
 #######################################################################################################
 # API 설정
 # 
 #######################################################################################################
 
-@app.post("/pdf_process")
-async def pdf_to_image(
-    pdf: UploadFile = File(...)
-):
-    pass
-
-# return 예시
-# return JSONResponse(
-#         content={
-#             "message": "이미지 분류 요청이 성공적으로 처리되었습니다",
-#             "image_filename": image.filename,
-#             "top_category": top_category.category_name,
-#             "score": float(top_category.score)  # float32를 JSON 직렬화 가능한 형태로 변환
-#         },
-#         status_code=200
-#     )
-
-@app.post("/test")
-async def test(
+@app.post("/process-pdf/")
+async def process_pdf(
     file: UploadFile = File(...)
 ):
+    """Processes a PDF, extracts face from first page, and OCR from last pages."""
+    pdf_bytes = await file.read()
+    images = convert_from_bytes(pdf_bytes, dpi=150)
+
+    if not images:
+        return {"error": "Failed to process PDF."}
+
+    first_page = images[0]
+    selected_pages = images[-3:-1]
+
+    face_task = asyncio.create_task(recognize_faces(first_page))
+    ocr_tasks = [asyncio.create_task(extract_text_from_image(page)) for page in selected_pages]
+    results = await asyncio.gather(face_task, *ocr_tasks)
+
+    ocr_results = [text for text in results[1:] if text is not None]
+    combined_text = " ".join(ocr_results)
+    is_verified = verify_text(combined_text)
+
+    if is_verified == False:
+        return {"error": "Not a school record."}
+    
     try:
-        os.makedirs("files", exist_ok=True)
-        file_location = f"files/{file.filename}"
-        with open(file_location, "wb") as f:
-            f.write(await file.read())
-
-        image_filename="user.png"
-        background = await create_background(os.path.dirname(image_filename))  # 배경 생성
-        img=get_image(image_filename=image_filename,background=background,text="테스트입니다. 테스트입니다. 테스트입니다.",plantext="장점입니다.")
-        # 이미지를 바이트 스트림으로 변환
-        img_byte_arr = BytesIO()
-        img.save(img_byte_arr, format="PNG")
-        img_byte_arr.seek(0)  # 스트림 포인터를 처음으로 이동
-        # 이미지 스트리밍 반환
-        response = StreamingResponse(img_byte_arr, media_type="image/png")
-
-        delete_image(image_filename, background) 
-
+        # PDF 처리 및 텍스트 추출
+        extracted_text = ocr_results
+        
+        # 추출된 텍스트를 문장 단위로 분리
+        sentences = text_split(extracted_text)
+        
+        # 문장을 장/단점으로 분석
+        analysis_result = text_prosCons(sentences)
+        
         return JSONResponse(
             content={
-                "message": "파일 업로드 성공!",
-                "file_name": file.filename
+                "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
+                "advantages": analysis_result["장점"],
+                "disadvantages": analysis_result["단점"]
             },
             status_code=200
         )
-    
     except Exception as e:
         return JSONResponse(
             content={
-                "message": f"파일 업로드 실패: {str(e)}"
+                "message": f"PDF 처리 중 오류 발생: {str(e)}"
             },
             status_code=500
         )
-
- 
 
 #######################################################################################################
 # 함수 정의
 # 정의 된 함수를 /pdf_process 에서 호출
 #######################################################################################################
 
-# 이미지 처리 방법 1
-def image_process1(image_path: str):
-    image = Image.open(image_path)  # 이미지 로드
-    return image
+def verify_text(text):
+    """Checks if extracted text contains all required keywords."""
+    return all(keyword in text for keyword in VERIFICATION_KEYWORDS)
 
-# # 예시 사용
-# image = image_process1("sample.jpg")
-# image.show()
 
-# 이미지 처리 방법 2
-def image_process2(image_bytes: bytes):
-    image = Image.open(io.BytesIO(image_bytes))  # 이미지 로드
-    return image
+async def extract_text_from_image(image):
+    """Runs OCR on an image using Google Cloud Vision API."""
+    loop = asyncio.get_running_loop()
+    image_np = np.array(image)
+    return await loop.run_in_executor(executor, google_vision_ocr, image_np)
 
-# # 예시 사용
-# with open("sample.jpg", "rb") as f:
-#     image_data = f.read()
 
-# image = image_process2(image_data)
-# image.show()
+def google_vision_ocr(image_np):
+    """Runs OCR on an image in a separate thread."""
+    _, encoded_img = cv2.imencode('.png', image_np)
+    content = encoded_img.tobytes()
+    response = vision_client.text_detection(image=vision.Image(content=content))
+    texts = response.text_annotations
+    return texts[0].description if texts else ""
 
-# PDF 파일 OCR 처리
-def pdf_process(
-    pdf: UploadFile = File(...)
-):
-    # async 처리 OCR
 
-    # async 처리 첫 페이지에서 이미지 추출
+async def recognize_faces(image):
+    """Detects a face in an image asynchronously."""
+    loop = asyncio.get_running_loop()
+    img = np.array(image)
+    return await loop.run_in_executor(executor, detect_faces, img)
 
-    pass
+
+def detect_faces(img, save_dir="faces"):
+    """Detects and crops face in an image and saves it with a unique filename."""
+    faces = face_model.get(img)
+    if not faces:
+        return None
+
+    face = faces[0]
+    bbox = face.bbox.astype(int)
+    x1, y1, x2, y2 = bbox
+
+    center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
+    fixed_width, fixed_height = 172, 216
+    x1, y1 = max(0, center_x - fixed_width // 2) + 3, max(0, center_y - fixed_height // 2) - 4
+    x2, y2 = min(img.shape[1], x1 + fixed_width), min(img.shape[0], y1 + fixed_height)
+
+    face_crop = img[y1:y2, x1:x2]
+    face_crop_bgr = cv2.cvtColor(face_crop, cv2.COLOR_RGB2BGR)
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    unique_id = uuid.uuid4().hex
+    jpg_path = os.path.join(save_dir, f"face_{unique_id}.jpg")
+    png_path = os.path.join(save_dir, f"face_{unique_id}.png")
+
+    cv2.imwrite(jpg_path, face_crop_bgr)
+    cv2.imwrite(png_path, face_crop_bgr)
+
+    return jpg_path, png_path
 
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
-def text_split(
-    text: str
-):
-    processed_text = text.replace("\n", " ").strip()
-    processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
-    processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
-    processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
-
-    processed_text = re.sub(r'학교 .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'\b학년\b', '', processed_text)
-    processed_text = re.sub(r'\b\d+\b', '', processed_text)
-
-    try:
-        spacing = Spacing()
-        corrected_text = spacing(processed_text)
-    except Exception as e:
-        print(f"띄어쓰기 교정 중 오류 발생: {e}")
-        corrected_text = processed_text
-
-    sentences = kss.split_sentences(corrected_text)
-    return [sentence.strip() for sentence in sentences if sentence.strip()]
-
 def text_split(
     text: str
 ):
@@ -233,18 +249,15 @@ def text_to_speech(
     return converted_texts
 
 
+
 # 이미지 카툰화
 def image_process(image_path: str, prompt="Randomly transformed cartoon image with unique features and playful details.", strength=0.6, guidance_scale=8, num_inference_steps=50):
-    # 이미지 파일을 열어 PIL 이미지 객체로 변환
     image = Image.open(image_path)
-    image = image.resize((512, 512))  # 모델에 맞는 크기로 리사이즈
-    
-    # 카툰화 처리
+    image = image.resize((512, 512)) 
+
     result = pipe(prompt=prompt, image=image, strength=strength, guidance_scale=guidance_scale, num_inference_steps=num_inference_steps).images[0]
     
     return result
-
-
 
 # 요약된 장/단점과 카툰화된 이미지를 하나의 이미지로 생성
 def get_image(
@@ -259,8 +272,6 @@ def get_image(
     cartoon_image_with_text = add_text_below_image(apply_background, text,plantext)
     return cartoon_image_with_text
 
-
- 
 
 # 텍스트를 최대 너비에 맞춰 분할하는 함수
 def wrap_text(draw, font, text, max_width):
@@ -365,6 +376,7 @@ def apply_new_background(input_image_path, background_image_path):
         return final_image_pil
 
 # 비동기 이미지 생성 함수
+#이미지 경로받기
 async def create_background(background_image_path):
     img_path = os.path.join(background_image_path, "back")  # 배경 이미지 경로
     prompt = "Simple background"
