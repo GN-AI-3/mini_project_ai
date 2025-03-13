@@ -10,7 +10,19 @@ import kss
 import re
 import io
 
+import uuid
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+import cv2
+import numpy as np
+from google.cloud import vision
+from pdf2image import convert_from_bytes
+
+import insightface
+
 app = FastAPI()
+executor = ThreadPoolExecutor(max_workers=4)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +36,13 @@ app.add_middleware(
 # 모델 선언
 # 모델은 전역에서 선언
 #######################################################################################################
+
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
+
+vision_client = vision.ImageAnnotatorClient()
+
+face_model = insightface.app.FaceAnalysis(providers=['CUDAExecutionProvider'])
+face_model.prepare(ctx_id=0)
 
 model_text_style = pipeline(
     'text2text-generation',
