@@ -2,11 +2,20 @@ from fastapi import FastAPI, UploadFile, File
 from typing import List
 from pykospacing import Spacing
 from PIL import Image
+from fastapi.middleware.cors import CORSMiddleware
 import kss
 import re
 import io
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 ##############################################
 # 모델 선언
@@ -27,6 +36,9 @@ async def pdf_to_image(
 ):
     pass
 
+@app.get("/test")
+def test():
+    print("test success")
 
 ##############################################
 # 함수 정의
