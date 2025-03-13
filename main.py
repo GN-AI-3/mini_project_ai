@@ -105,33 +105,6 @@ async def test(
             status_code=500
         )
 
-@app.post("/analyze_text")
-async def analyze_text(
-    text: str
-):
-    """
-    텍스트를 입력받아 장/단점을 분석하는 API
-    """
-    try:
-        sentences = text_split(text)
-        analysis_result = text_prosCons(sentences)
-        
-        return JSONResponse(
-            content={
-                "message": "텍스트 분석이 성공적으로 완료되었습니다",
-                "advantages": analysis_result["장점"],
-                "disadvantages": analysis_result["단점"]
-            },
-            status_code=200
-        )
-    except Exception as e:
-        return JSONResponse(
-            content={
-                "message": f"텍스트 분석 중 오류 발생: {str(e)}"
-            },
-            status_code=500
-        )
-
 #######################################################################################################
 # 함수 정의
 # 정의 된 함수를 /pdf_process 에서 호출
