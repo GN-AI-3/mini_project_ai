@@ -377,14 +377,14 @@ def get_classifier():
 
 def analyze_student_text(text_lines, max_items=8):
     """
-    학생 평가 텍스트를 분석하여 장점과 단점을 추출
+    학생 평가 텍스트를 분석하여 장점을 추출
     
     Args:
         text_lines: 분석할 텍스트 (문자열 또는 문장 배열)
         max_items: 출력할 최대 항목 수 (기본값: 8)
         
     Returns:
-        분석 결과 {"장점": [...], "단점": [...]}
+        분석 결과 {"장점": [...]}
     """
     classifier = get_classifier()
     sentences = split_sentences(text_lines)
@@ -409,12 +409,10 @@ def analyze_student_text(text_lines, max_items=8):
     # 최대 항목 수 제한
     advantages = advantages[:max_items]
     # 단점은 여전히 계산하지만 출력하지 않음
-    disadvantages = disadvantages[:max_items]
     
-    # 결과 반환
+    # 결과 반환 - 단점 부분 제거
     return {
-        "장점": [item[0] for item in advantages],
-        "단점": [item[0] for item in disadvantages]
+        "장점": [item[0] for item in advantages]
     }
 
 def print_analysis_results(results):
@@ -440,12 +438,12 @@ def analyze_student_evaluation(student_text=None, max_items=8):
         max_items: 출력할 최대 항목 수 (기본값: 8)
         
     Returns:
-        분석 결과 {"장점": [...], "단점": [...]}
+        분석 결과 {"장점": [...]}
     """
     # 텍스트가 제공되지 않으면 오류 메시지 출력
     if student_text is None:
         print("분석할 텍스트가 제공되지 않았습니다.")
-        return {"장점": [], "단점": []}
+        return {"장점": []}
     
     # 분석 수행 및 결과 출력
     results = analyze_student_text(student_text, max_items=max_items)
