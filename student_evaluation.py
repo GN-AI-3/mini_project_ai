@@ -375,13 +375,13 @@ def get_classifier():
 
 # ===== 공개 API 함수 =====
 
-def analyze_student_text(text_lines, max_items=5):
+def analyze_student_text(text_lines, max_items=8):
     """
     학생 평가 텍스트를 분석하여 장점과 단점을 추출
     
     Args:
         text_lines: 분석할 텍스트 (문자열 또는 문장 배열)
-        max_items: 각 카테고리별 출력할 최대 항목 수 (기본값: 5)
+        max_items: 출력할 최대 항목 수 (기본값: 8)
         
     Returns:
         분석 결과 {"장점": [...], "단점": [...]}
@@ -408,6 +408,7 @@ def analyze_student_text(text_lines, max_items=5):
     
     # 최대 항목 수 제한
     advantages = advantages[:max_items]
+    # 단점은 여전히 계산하지만 출력하지 않음
     disadvantages = disadvantages[:max_items]
     
     # 결과 반환
@@ -429,18 +430,14 @@ def print_analysis_results(results):
     for i, advantage in enumerate(results["장점"], 1):
         # 긴 문장은 80자 기준으로 줄바꿈하여 출력
         print(f"{i}. {advantage}")
-        
-    print("\n[단점]")
-    for i, disadvantage in enumerate(results["단점"], 1):
-        print(f"{i}. {disadvantage}")
 
-def analyze_student_evaluation(student_text=None, max_items=5):
+def analyze_student_evaluation(student_text=None, max_items=8):
     """
-    학생 평가 텍스트 분석 및 결과 출력 (장점/단점 추출)
+    학생 평가 텍스트 분석 및 결과 출력 (장점만 추출)
     
     Args:
         student_text: 분석할 텍스트 (필수)
-        max_items: 각 카테고리별 출력할 최대 항목 수
+        max_items: 출력할 최대 항목 수 (기본값: 8)
         
     Returns:
         분석 결과 {"장점": [...], "단점": [...]}
@@ -457,4 +454,4 @@ def analyze_student_evaluation(student_text=None, max_items=5):
 
 # 실행 코드
 if __name__ == "__main__":
-    analyze_student_evaluation(max_items=5) 
+    analyze_student_evaluation(max_items=8) 
