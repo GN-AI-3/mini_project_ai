@@ -24,3 +24,6 @@ env/
 # 시스템 파일
 .DS_Store
 Thumbs.db
+
+/mini-api-test-a0538c7dd495.json
+__pycache__/
