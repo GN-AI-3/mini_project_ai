@@ -1,13 +1,15 @@
-from fastapi import FastAPI, UploadFile, File
-import cv2
-import numpy as np
-import insightface
-from google.cloud import vision
-from pdf2image import convert_from_bytes
-import uuid
 import os
+import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+import cv2
+import numpy as np
+from google.cloud import vision
+from pdf2image import convert_from_bytes
+
+import insightface
+from fastapi import FastAPI, UploadFile, File
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
 
@@ -74,7 +76,8 @@ def detect_faces(img, save_dir="faces"):
     cv2.imwrite(jpg_path, face_crop_bgr)
     cv2.imwrite(png_path, face_crop_bgr)
 
-    return jpg_path, png_path  # Return file paths for further use
+    # Return file paths for further use
+    return jpg_path, png_path
 
 @app.post("/process-pdf/")
 async def process_pdf(file: UploadFile = File(...)):
