@@ -1,0 +1,125 @@
+from fastapi import FastAPI, UploadFile, File
+from typing import List
+from pykospacing import Spacing
+from PIL import Image
+import kss
+import re
+import io
+
+app = FastAPI()
+
+##############################################
+# 모델 선언
+# 모델은 전역에서 선언
+##############################################
+
+model = None
+
+
+##############################################
+# API 설정
+# 
+##############################################
+
+@app.post("/pdf_process")
+async def pdf_to_image(
+    pdf: UploadFile = File(...)
+):
+    pass
+
+
+##############################################
+# 함수 정의
+# 정의 된 함수를 /pdf_process 에서 호출
+##############################################
+
+# 이미지 처리 방법 1
+def image_process1(image_path: str):
+    image = Image.open(image_path)  # 이미지 로드
+    return image
+
+# # 예시 사용
+# image = image_process1("sample.jpg")
+# image.show()
+
+# 이미지 처리 방법 2
+def image_process2(image_bytes: bytes):
+    image = Image.open(io.BytesIO(image_bytes))  # 이미지 로드
+    return image
+
+# # 예시 사용
+# with open("sample.jpg", "rb") as f:
+#     image_data = f.read()
+
+# image = image_process2(image_data)
+# image.show()
+
+# PDF 파일 OCR 처리
+def pdf_process(
+    pdf: UploadFile = File(...)
+):
+    # async 처리 OCR
+
+    # async 처리 첫 페이지에서 이미지 추출
+
+    pass
+
+
+# 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
+def text_split(
+    text: str
+):
+    processed_text = text.replace("\n", " ").strip()
+    processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
+    processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
+    processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
+    processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
+
+    processed_text = re.sub(r'학교 .+? \(신청인 : .+?\)', '', processed_text)
+    processed_text = re.sub(r'\b학년\b', '', processed_text)
+    processed_text = re.sub(r'\b\d+\b', '', processed_text)
+
+    try:
+        spacing = Spacing()
+        corrected_text = spacing(processed_text)
+    except Exception as e:
+        print(f"띄어쓰기 교정 중 오류 발생: {e}")
+        corrected_text = processed_text
+
+    sentences = kss.split_sentences(corrected_text)
+    return [sentence.strip() for sentence in sentences if sentence.strip()]
+
+
+# 문장 단위로 구분된 텍스트 장/단점 구분
+def text_prosCons(
+    text: List[str]
+):
+    pass
+
+
+# 장/단점 구분된 텍스트 요약
+def summarizeProsCons(
+    prosCons: list[str]
+):
+    pass
+
+
+# 이미지 카툰화
+def image_process(
+    image_path: str,
+    image_bytes: bytes
+):
+    image = image_process1(image_path)
+    image = image_process2(image_bytes)
+    pass
+
+
+# 요약된 장/단점과 카툰화된 이미지를 하나의 이미지로 생성
+def get_image(
+    image_path: str,
+    image_bytes: bytes,
+    prosCons: list[str]
+):
+    image = image_process1(image_path)
+    image = image_process2(image_bytes)
+    pass
