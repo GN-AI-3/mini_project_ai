@@ -19,6 +19,12 @@ face_model.prepare(ctx_id=0)
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=4)
 
+VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
+
+def verify_text(text):
+    """Checks if extracted text contains all required keywords."""
+    return all(keyword in text for keyword in VERIFICATION_KEYWORDS)
+
 async def extract_text_from_image(image):
     """Runs OCR on an image using Google Cloud Vision API."""
     loop = asyncio.get_running_loop()
@@ -75,6 +81,7 @@ async def process_pdf(file: UploadFile = File(...)):
     """Processes a PDF, extracts face from first page, and OCR from last pages."""
     pdf_bytes = await file.read()
     images = convert_from_bytes(pdf_bytes, dpi=150)
+
     if not images:
         return {"error": "Failed to process PDF."}
     
@@ -85,6 +92,11 @@ async def process_pdf(file: UploadFile = File(...)):
     ocr_tasks = [asyncio.create_task(extract_text_from_image(page)) for page in selected_pages]
     results = await asyncio.gather(face_task, *ocr_tasks)
 
+    ocr_results = [text for text in results[1:] if text is not None]
+    combined_text = " ".join(ocr_results)
+    is_verified = verify_text(combined_text)
+
     return {
-        "ocr_results": results[1:]
+        "ocr_results": results[1:],
+        "verification_passed": is_verified
     }
