@@ -36,6 +36,17 @@ async def pdf_to_image(
 ):
     pass
 
+# return 예시
+# return JSONResponse(
+#         content={
+#             "message": "이미지 분류 요청이 성공적으로 처리되었습니다",
+#             "image_filename": image.filename,
+#             "top_category": top_category.category_name,
+#             "score": float(top_category.score)  # float32를 JSON 직렬화 가능한 형태로 변환
+#         },
+#         status_code=200
+#     )
+
 @app.get("/test")
 def test():
     print("test success")
