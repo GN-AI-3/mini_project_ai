@@ -125,6 +125,7 @@ def text_split(
     processed_text = re.sub(r'학교 .+? \(신청인 : .+?\)', '', processed_text)
     processed_text = re.sub(r'\b학년\b', '', processed_text)
     processed_text = re.sub(r'\b\d+\b', '', processed_text)
+    processed_text = processed_text.replace(" ", "")
 
     try:
         spacing = Spacing()
