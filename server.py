@@ -11,27 +11,34 @@ from pdf2image import convert_from_bytes
 import insightface
 from fastapi import FastAPI, UploadFile, File
 
+# Set up Google Vision credentials
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
 
 vision_client = vision.ImageAnnotatorClient()
 
+# Initialize face model
 face_model = insightface.app.FaceAnalysis(providers=['CUDAExecutionProvider'])
 face_model.prepare(ctx_id=0)
 
+# Initialize FastAPI app and ThreadPoolExecutor
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=4)
 
+# Keywords for verification
 VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
+
 
 def verify_text(text):
     """Checks if extracted text contains all required keywords."""
     return all(keyword in text for keyword in VERIFICATION_KEYWORDS)
+
 
 async def extract_text_from_image(image):
     """Runs OCR on an image using Google Cloud Vision API."""
     loop = asyncio.get_running_loop()
     image_np = np.array(image)
     return await loop.run_in_executor(executor, google_vision_ocr, image_np)
+
 
 def google_vision_ocr(image_np):
     """Runs OCR on an image in a separate thread."""
@@ -41,11 +48,13 @@ def google_vision_ocr(image_np):
     texts = response.text_annotations
     return texts[0].description if texts else ""
 
+
 async def recognize_faces(image):
     """Detects a face in an image asynchronously."""
     loop = asyncio.get_running_loop()
     img = np.array(image)
     return await loop.run_in_executor(executor, detect_faces, img)
+
 
 def detect_faces(img, save_dir="faces"):
     """Detects and crops face in an image and saves it with a unique filename."""
@@ -79,6 +88,7 @@ def detect_faces(img, save_dir="faces"):
     # Return file paths for further use
     return jpg_path, png_path
 
+
 @app.post("/process-pdf/")
 async def process_pdf(file: UploadFile = File(...)):
     """Processes a PDF, extracts face from first page, and OCR from last pages."""
@@ -87,10 +97,10 @@ async def process_pdf(file: UploadFile = File(...)):
 
     if not images:
         return {"error": "Failed to process PDF."}
-    
+
     first_page = images[0]
-    selected_pages = images[-3:-1] 
-    
+    selected_pages = images[-3:-1]
+
     face_task = asyncio.create_task(recognize_faces(first_page))
     ocr_tasks = [asyncio.create_task(extract_text_from_image(page)) for page in selected_pages]
     results = await asyncio.gather(face_task, *ocr_tasks)
