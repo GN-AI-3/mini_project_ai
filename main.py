@@ -3,6 +3,8 @@ from typing import List
 from pykospacing import Spacing
 from PIL import Image
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import os
 import kss
 import re
 import io
@@ -47,9 +49,31 @@ async def pdf_to_image(
 #         status_code=200
 #     )
 
-@app.get("/test")
-def test():
-    print("test success")
+@app.post("/test")
+async def test(
+    file: UploadFile = File(...)
+):
+    try:
+        os.makedirs("files", exist_ok=True)
+        file_location = f"files/{file.filename}"
+        with open(file_location, "wb") as f:
+            f.write(await file.read())
+
+        return JSONResponse(
+            content={
+                "message": "파일 업로드 성공!",
+                "file_name": file.filename
+            },
+            status_code=200
+        )
+    
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "message": f"파일 업로드 실패: {str(e)}"
+            },
+            status_code=500
+        )
 
 ##############################################
 # 함수 정의
