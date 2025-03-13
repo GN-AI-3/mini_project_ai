@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import StreamingResponse
 from typing import List
 from pykospacing import Spacing
 from PIL import Image, ImageDraw, ImageFont
@@ -12,6 +13,7 @@ import io
 
 # student_evaluation.py 모듈 임포트
 import student_evaluation as se
+from io import BytesIO
 import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -94,6 +96,17 @@ async def process_pdf(
         return {"error": "Not a school record."}
     
     try:
+
+        # 이미지 변경  
+        image_filename=face_task
+        background = await create_background(os.path.dirname(image_filename))  # 배경 생성
+        img=get_image(image_filename=image_filename,background=background,text="테스트입니다. 테스트입니다. 테스트입니다.",plantext="장점입니다.")
+        # 이미지를 바이트 스트림으로 변환
+        img_byte_arr = BytesIO()
+        img.save(img_byte_arr, format="PNG")
+        img_byte_arr.seek(0)  # 스트림 포인터를 처음으로 이동
+        # 이미지 스트리밍 반환
+        response = StreamingResponse(img_byte_arr, media_type="image/png")
         # PDF 처리 및 텍스트 추출
         extracted_text = ocr_results
         
@@ -107,7 +120,8 @@ async def process_pdf(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
                 "advantages": analysis_result["장점"],
-                "disadvantages": analysis_result["단점"]
+                "disadvantages": analysis_result["단점"],
+                "response": response
             },
             status_code=200
         )
