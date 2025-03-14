@@ -113,8 +113,9 @@ async def process_pdf(
         summarizeProsCon = summarizeProsCons(analysis_result)
 
         # 이미지 변경  
-        background = await create_background(os.path.dirname(face_task))  # 배경 생성
-        img=get_image(image_filename=face_task,background=background,text=summarizeProsCon,plantext=analysis_result)
+        face_jpg_path, face_png_path = face_task  # 튜플 언패킹
+        background = await create_background(os.path.dirname(face_jpg_path))  # 배경 생성
+        img = get_image(image_filename=face_jpg_path, background=background, text=summarizeProsCon, plantext=analysis_result)
 
         # 이미지를 바이트 스트림으로 변환
         img_byte_arr = BytesIO()
@@ -205,8 +206,9 @@ def detect_faces(img, save_dir="faces"):
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
 def text_split(
-    text: str
+    text: list[str]
 ):
+    text = text[0]
     processed_text = text.replace("\n", " ").strip()
     processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
     processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
@@ -247,9 +249,15 @@ def text_prosCons(
 
 # 장/단점 구분된 텍스트 요약
 def summarizeProsCons(
-    prosCons: list[str]
+    prosCons: dict
 ):
-    pass
+    # 장점과 단점을 구어체로 변환
+    advantages = text_to_speech(prosCons["장점"])
+    disadvantages = text_to_speech(prosCons["단점"])
+    
+    # 요약 텍스트 생성
+    summary = "장점:\n" + "\n".join(advantages) + "\n\n단점:\n" + "\n".join(disadvantages)
+    return summary
 
 
 # 요약된 텍스트 구어체로 변경
