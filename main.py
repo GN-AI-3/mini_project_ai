@@ -11,7 +11,7 @@ import kss
 import re
 import io
 import torch
-
+import mediapipe as mp
 # student_evaluation.py 모듈 임포트
 import student_evaluation as se
 from io import BytesIO
@@ -268,7 +268,7 @@ def text_to_speech(
 
 
 # 이미지 카툰화
-def image_process(image_path: str, prompt="Simple cartoon character with bold outlines and flat colors", strength=0.6, guidance_scale=8, num_inference_steps=50):
+def image_process(image_path: str, prompt="safe Simple cartoon character with bold outlines and flat colors", strength=0.6, guidance_scale=8, num_inference_steps=50):
     image = Image.open(image_path)
     image = image.resize((512, 512)) 
 
@@ -283,7 +283,8 @@ def get_image(
     text: str,
     plantext: str
 ):
-    apply_background = apply_new_background(image_path, background)
+    cartoon_iamge=image_process(image_path)
+    apply_background = apply_new_background(cartoon_iamge, background)
     
     # 4. 텍스트를 이미지 하단에 추가
     cartoon_image_with_text = add_text_below_image(apply_background, text,plantext)
@@ -407,7 +408,7 @@ def apply_new_background(input_image_path, background_image_path):
 #이미지 경로받기
 async def create_background(background_image_path):
     img_path = os.path.join(background_image_path, "back")  # 배경 이미지 경로
-    prompt = "Plain background"
+    prompt = "safe Plain background"
     dynamic_seed = torch.randint(0, 2**32, (1,), dtype=torch.int64).item()  # 동적 시드 생성
     
     # 비동기적으로 이미지를 생성
