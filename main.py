@@ -9,6 +9,9 @@ import os
 import kss
 import re
 import io
+import csv
+import random
+import time
 
 # student_evaluation.py 모듈 임포트
 import student_evaluation as se
@@ -63,6 +66,8 @@ async def process_pdf(
     file: UploadFile = File(...)
 ):
     """Processes a PDF, extracts face from first page, and OCR from last pages."""
+    final_start_time = time.time()
+    start_time = time.time()
     pdf_bytes = await file.read()
     images = convert_from_bytes(pdf_bytes, dpi=150)
 
@@ -80,6 +85,10 @@ async def process_pdf(
     combined_text = " ".join(ocr_results)
     is_verified = verify_text(combined_text)
 
+    end_time = time.time()
+    print(f"PDF 처리 시간: {end_time - start_time}초")
+    print("ocr_results", ocr_results)
+
     if is_verified == False:
         return {"error": "Not a school record."}
     
@@ -88,10 +97,21 @@ async def process_pdf(
         extracted_text = ocr_results
         
         # 추출된 텍스트를 문장 단위로 분리
+        start_time = time.time()
         sentences = text_split(extracted_text)
+        print("sentences", sentences)
+        end_time = time.time()
+        print(f"텍스트 분리 시간: {end_time - start_time}초")
         
         # 문장을 장/단점으로 분석
+        start_time = time.time()
         analysis_result = text_prosCons(sentences)
+        print("analysis_result", analysis_result)
+        end_time = time.time()
+        print(f"장/단점 분석 시간: {end_time - start_time}초")
+
+        final_end_time = time.time()
+        print(f"최종 처리 시간: {final_end_time - final_start_time}초")
         
         return JSONResponse(
             content={
@@ -122,7 +142,7 @@ def verify_text(text):
 async def extract_text_from_image(image):
     """Runs OCR on an image using Google Cloud Vision API."""
     loop = asyncio.get_running_loop()
-    image_np = np.array(image)
+    image_np = np.asarray(image)
     return await loop.run_in_executor(executor, google_vision_ocr, image_np)
 
 
@@ -138,7 +158,7 @@ def google_vision_ocr(image_np):
 async def recognize_faces(image):
     """Detects a face in an image asynchronously."""
     loop = asyncio.get_running_loop()
-    img = np.array(image)
+    img = np.asarray(image)
     return await loop.run_in_executor(executor, detect_faces, img)
 
 
@@ -174,11 +194,13 @@ def detect_faces(img, save_dir="faces"):
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
 def text_split(
-    text: str
+    text: List[str]
 ):
+    text = text[0]
     processed_text = text.replace("\n", " ").strip()
     processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
     processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
+    processed_text = re.sub(r'문서 확인번호: .+? \(신청인 : .+?\)', '', processed_text)
     processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
     processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
 
@@ -218,7 +240,25 @@ def text_prosCons(
 def summarizeProsCons(
     prosCons: list[str]
 ):
-    pass
+    # CSV 파일 읽기
+    predefined_data = []
+    with open('predefined_titles_and_descriptions.csv', mode='r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            predefined_data.append(row)
+
+    # 선정하는 로직 추가 예정
+    random_num = random.randint(0, 97)
+    selected = predefined_data[random_num]
+
+    # # 사용 예시
+    # input_text = "이 학생은 리더십이 뛰어나며 팀워크를 중시합니다."
+    # keyword, description = find_title_and_description(input_text)
+
+    # print("제목:", keyword)
+    # print("설명글:", description)
+    
+    return selected[0], selected[2]
 
 
 # 요약된 텍스트 구어체로 변경
