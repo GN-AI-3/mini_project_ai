@@ -4,8 +4,16 @@ python-multipart
 Pillow
 fasttext-wheel
 numpy
-# pykospacing
+git+https://github.com/haven-jeon/PyKoSpacing.git
 kss
+tf-keras
+google-cloud-vision==3.10.0
+onnxruntime
+insightface
+pdf2image
+cv2
+transformers
+torch
 # acres==0.3.0
 # aiofiles==24.1.0
 # albucore==0.0.23
