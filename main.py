@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 from fastapi.middleware.cors import CORSMiddleware  # 한 번만 임포트
 from fastapi.responses import JSONResponse
 from transformers import pipeline
+from sentence_transformers import SentenceTransformer, util
 import os
 import kss
 import re
@@ -26,8 +27,18 @@ from pdf2image import convert_from_bytes
 from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionPipeline
 import insightface
 
-
+####################################################################################################### 
+# 전역 변수 선언
+#
+#######################################################################################################
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
+PREDEFINED_OUTPUT_CSV_FILE_PATH = "predefined_titles_and_descriptions.csv"
+EMBEDDING_DATA_FILE_PATH = "embeddings.pkl"
+VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
+
+# 모델 로드 (전역 변수)
+embedding_model_instance = None
+spacing_instance = Spacing()
 
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=4)
@@ -55,7 +66,7 @@ vision_client = vision.ImageAnnotatorClient()
 face_model = insightface.app.FaceAnalysis(providers=['CUDAExecutionProvider'])
 face_model.prepare(ctx_id=0)
 
-VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
+embedding_model_instance = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
 
 # Stable Diffusion 모델 로딩
 pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
@@ -110,7 +121,7 @@ async def process_pdf(
         analysis_result = text_prosCons(sentences)
 
         # 장/단점 요약
-        summarizeProsCon = summarizeProsCons(analysis_result)
+        summarizeProsCon = get_most_similar_sentence(analysis_result)
 
         # 이미지 변경  
         face_jpg_path, face_png_path = face_task  # 튜플 언패킹
@@ -240,7 +251,7 @@ def text_prosCons(
     try:
         # 전달된 텍스트 분석
         analysis_result = se.analyze_student_text(text, max_items=max_items)
-        return analysis_result
+        return analysis_result.get("장점", [])
     except Exception as e:
         print(f"텍스트 분석 중 오류 발생: {e}")
         # 오류 발생 시 빈 결과 반환
@@ -248,16 +259,46 @@ def text_prosCons(
 
 
 # 장/단점 구분된 텍스트 요약
-def summarizeProsCons(
-    prosCons: dict
-):
-    # 장점과 단점을 구어체로 변환
-    advantages = text_to_speech(prosCons["장점"])
-    disadvantages = text_to_speech(prosCons["단점"])
-    
-    # 요약 텍스트 생성
-    summary = "장점:\n" + "\n".join(advantages) + "\n\n단점:\n" + "\n".join(disadvantages)
-    return summary
+def get_most_similar_sentence(
+        input_sentence: str
+    ):
+    """
+    주어진 문장과 저장된 임베딩 데이터를 활용해 가장 유사한 문장을 찾는 함수.
+
+    Args:
+        input_sentence (str): 유사도를 비교할 입력 문장.
+
+    Returns:
+        tuple: 유사도 점수, 가장 유사한 문장의 제목, 설명
+               (유사도 점수, 제목, 설명).
+    """
+    # 임베딩 데이터와 CSV 데이터를 로드
+    try:
+        with open(EMBEDDING_DATA_FILE_PATH, 'rb') as embedding_file:
+            csv_data_rows, embedding_vectors = pickle.load(embedding_file)
+    except FileNotFoundError:
+        raise ValueError(f"임베딩 파일 {EMBEDDING_DATA_FILE_PATH}을(를) 찾을 수 없습니다.")
+    except pickle.UnpicklingError:
+        raise ValueError(f"임베딩 파일 {EMBEDDING_DATA_FILE_PATH}의 형식이 올바르지 않습니다.")
+
+    # 입력 문장 전처리 및 임베딩 생성
+    embedding_model = load_embedding_model()
+    preprocessed_text = re.sub(r'\n|\([^)]*\)|\s', '', input_sentence)
+    spaced_text = spacing_instance(preprocessed_text)
+    input_sentence_embedding = embedding_model.encode(spaced_text)
+    print(spaced_text)
+
+    # 코사인 유사도 계산
+    similarity_scores = util.cos_sim(input_sentence_embedding, embedding_vectors)
+    most_similar_index = np.argmax(similarity_scores)
+    most_similar_score = similarity_scores[0][most_similar_index]
+
+    # 가장 유사한 행 데이터 가져오기
+    matched_row = csv_data_rows[most_similar_index]
+    matched_title = matched_row[0]
+    matched_description = matched_row[2]
+
+    return matched_title, matched_description, most_similar_score.item()
 
 
 # 요약된 텍스트 구어체로 변경
