@@ -469,7 +469,7 @@ def analyze_student_text(text_lines, max_items=8):
     # 최대 항목 수 제한
     advantages = advantages[:max_items]
     # 단점은 여전히 계산하지만 출력하지 않음
-    
+
     # 결과 반환 - 단점 부분 제거
     return {
         "장점": [item[0] for item in advantages]

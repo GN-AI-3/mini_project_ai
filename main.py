@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware  # 한 번만 임포트
 from fastapi.responses import JSONResponse
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
+import time
+import pickle
 import os
 import kss
 import re
@@ -87,6 +89,8 @@ mp_selfie_segmentation = mp.solutions.selfie_segmentation
 async def process_pdf(
     file: UploadFile = File(...)
 ):
+    start_time = time.time()
+    final_start_time = time.time()
     """Processes a PDF, extracts face from first page, and OCR from last pages."""
     pdf_bytes = await file.read()
     images = convert_from_bytes(pdf_bytes, dpi=150)
@@ -104,26 +108,37 @@ async def process_pdf(
     ocr_results = [text for text in results[1:] if text is not None]
     combined_text = " ".join(ocr_results)
     is_verified = verify_text(combined_text)
+    end_time = time.time()
+    print("OCR 결과 : " + combined_text)
+    print(f"PDF 처리 시간: {end_time - start_time}초")
 
     if is_verified == False:
         return {"error": "Not a school record."}
     
     try:
-
-
-        # PDF 처리 및 텍스트 추출
-        extracted_text = ocr_results
-        
         # 추출된 텍스트를 문장 단위로 분리
-        sentences = text_split(extracted_text)
+        start_time = time.time()
+        sentences = text_split(combined_text)
+        end_time = time.time()
+        print("텍스트 분리 결과:", sentences)  # 리스트를 직접 출력
+        print(f"텍스트 분리 시간: {end_time - start_time}초")
         
         # 문장을 장/단점으로 분석
+        start_time = time.time()
         analysis_result = text_prosCons(sentences)
+        end_time = time.time()
+        print("장/단점 분석 결과:", analysis_result)
+        print(f"장/단점 분석 시간: {end_time - start_time}초")
 
         # 장/단점 요약
-        summarizeProsCon = get_most_similar_sentence(analysis_result)
+        start_time = time.time()
+        summarizeProsCon = get_most_similar_sentence(analysis_result[0])
+        end_time = time.time()
+        print("장/단점 요약 결과:", summarizeProsCon)
+        print(f"장/단점 요약 시간: {end_time - start_time}초")
 
         # 이미지 변경  
+        start_time = time.time()
         face_jpg_path, face_png_path = face_task  # 튜플 언패킹
         background = await create_background(os.path.dirname(face_jpg_path))  # 배경 생성
         img = get_image(image_filename=face_jpg_path, background=background, text=summarizeProsCon, plantext=analysis_result)
@@ -135,6 +150,11 @@ async def process_pdf(
         
         # 이미지 스트리밍 반환
         response = StreamingResponse(img_byte_arr, media_type="image/png")
+        end_time = time.time()
+        print(f"이미지 처리 시간: {end_time - start_time}초")
+        final_end_time = time.time()
+        print(f"최종 처리 시간: {final_end_time - final_start_time}초")
+
         return JSONResponse(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
@@ -217,12 +237,13 @@ def detect_faces(img, save_dir="faces"):
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
 def text_split(
-    text: list[str]
-):
-    text = text[0]
+    text: str
+):  
+    processed_text = remove_before_keyword(text, "행동 특성 및 종합의견")
     processed_text = text.replace("\n", " ").strip()
     processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
-    processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
+    processed_text = re.sub(r'문서확인번호 .+? \(신청인 : .+?\)', '', processed_text)
+    processed_text = re.sub(r'문서 확인번호 .+? \(신청인 : .+?\)', '', processed_text)
     processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
     processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
 
@@ -241,6 +262,11 @@ def text_split(
     sentences = kss.split_sentences(corrected_text)
     return [sentence.strip() for sentence in sentences if sentence.strip()]
 
+def remove_before_keyword(text: str, keyword: str) -> str:
+    index = text.find(keyword)
+    if index != -1:  
+        return text[index:]
+    return text
 
 # 문장 단위로 구분된 텍스트 장/단점 구분
 def text_prosCons(
@@ -250,8 +276,9 @@ def text_prosCons(
     
     try:
         # 전달된 텍스트 분석
-        analysis_result = se.analyze_student_text(text, max_items=max_items)
-        return analysis_result.get("장점", [])
+        analysis_result = se.analyze_student_evaluation(text, max_items=max_items)
+        result = analysis_result.get("장점")
+        return result
     except Exception as e:
         print(f"텍스트 분석 중 오류 발생: {e}")
         # 오류 발생 시 빈 결과 반환
@@ -282,11 +309,7 @@ def get_most_similar_sentence(
         raise ValueError(f"임베딩 파일 {EMBEDDING_DATA_FILE_PATH}의 형식이 올바르지 않습니다.")
 
     # 입력 문장 전처리 및 임베딩 생성
-    embedding_model = load_embedding_model()
-    preprocessed_text = re.sub(r'\n|\([^)]*\)|\s', '', input_sentence)
-    spaced_text = spacing_instance(preprocessed_text)
-    input_sentence_embedding = embedding_model.encode(spaced_text)
-    print(spaced_text)
+    input_sentence_embedding = embedding_model_instance.encode(input_sentence)
 
     # 코사인 유사도 계산
     similarity_scores = util.cos_sim(input_sentence_embedding, embedding_vectors)
