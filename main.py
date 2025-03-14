@@ -9,6 +9,8 @@ import os
 import kss
 import re
 import io
+import csv
+import random
 
 # student_evaluation.py 모듈 임포트
 import student_evaluation as se
@@ -218,7 +220,25 @@ def text_prosCons(
 def summarizeProsCons(
     prosCons: list[str]
 ):
-    pass
+    # CSV 파일 읽기
+    predefined_data = []
+    with open('predefined_titles_and_descriptions.csv', mode='r', encoding='utf-8') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            predefined_data.append(row)
+
+    # 선정하는 로직 추가 예정
+    random_num = random.randint(0, 97)
+    selected = predefined_data[random_num]
+
+    # # 사용 예시
+    # input_text = "이 학생은 리더십이 뛰어나며 팀워크를 중시합니다."
+    # keyword, description = find_title_and_description(input_text)
+
+    # print("제목:", keyword)
+    # print("설명글:", description)
+    
+    return selected[0], selected[2]
 
 
 # 요약된 텍스트 구어체로 변경
