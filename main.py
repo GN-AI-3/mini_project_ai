@@ -110,14 +110,15 @@ async def process_pdf(
                 # 이미지 변경  
         image_filename=face_task
         background = await create_background(os.path.dirname(image_filename))  # 배경 생성
-        img=get_image(image_filename=image_filename,background=background,text="테스트입니다. 테스트입니다. 테스트입니다.",plantext=analysis_result)
+        img= await get_image(image_filename=image_filename,background=background,text="테스트입니다. 테스트입니다. 테스트입니다.",plantext=analysis_result)
         # 이미지를 바이트 스트림으로 변환
         img_byte_arr = BytesIO()
         img.save(img_byte_arr, format="PNG")
         img_byte_arr.seek(0)  # 스트림 포인터를 처음으로 이동
-        
+ 
         # 이미지 스트리밍 반환
         response = StreamingResponse(img_byte_arr, media_type="image/png")
+        delete_image(background,image_filename)
         return JSONResponse(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
@@ -267,7 +268,7 @@ def text_to_speech(
 
 
 # 이미지 카툰화
-def image_process(image_path: str, prompt="Randomly transformed cartoon image with unique features and playful details.", strength=0.6, guidance_scale=8, num_inference_steps=50):
+def image_process(image_path: str, prompt="Simple cartoon character with bold outlines and flat colors", strength=0.6, guidance_scale=8, num_inference_steps=50):
     image = Image.open(image_path)
     image = image.resize((512, 512)) 
 
@@ -310,63 +311,74 @@ def wrap_text(draw, font, text, max_width):
 # 택스트 추가 이미지 생성
 def add_text_below_image(input_image, text, plantext):
     img = input_image
+
     try:
-        font = ImageFont.truetype("fonts/malgun.ttf", 30)  # 한글 폰트 경로
+        # 상단 텍스트용 더 큰 글꼴 (Bold, 큰 폰트 크기)
+        bold_font = ImageFont.truetype("fonts/malgun.ttf", 40, encoding="utf-8")
     except IOError:
-        font = ImageFont.load_default()  # 기본 폰트
+        bold_font = ImageFont.load_default()
+
+    try:
+        # 일반 텍스트용 작은 폰트
+        normal_font = ImageFont.truetype("fonts/malgun.ttf", 24, encoding="utf-8")
+    except IOError:
+        normal_font = ImageFont.load_default()
 
     width, height = img.size
     draw = ImageDraw.Draw(img)
 
-    # 텍스트를 이미지 상단에 넣기 위한 준비
-    max_width = width * 0.7  # 양옆에 여유를 두기 위해 120%로 설정
-    plan_lines = wrap_text(draw, font, plantext, max_width)
+    # 텍스트 wrapping 처리
+    max_width = width  # max_width를 이미지의 실제 너비로 설정
+    plan_lines = wrap_text(draw, bold_font, plantext, max_width)
 
     # 상단 텍스트의 높이 계산
     plan_line_height = 0
     for line in plan_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_bbox = draw.textbbox((0, 0), line, font=bold_font)
         line_height = text_bbox[3] - text_bbox[1]
         plan_line_height += line_height
     plan_line_height += 20  # 줄 간격 추가
 
-    # 기존 텍스트를 아래에 추가하는 계산
-    max_width = width * 1.2 
-    lines = wrap_text(draw, font, text, max_width)
-    line_spacing = 20
+    # 기존 텍스트 wrapping 처리
+    lines = wrap_text(draw, normal_font, text, max_width)
+    line_spacing = 15
     total_text_height = 0
     for line in lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_bbox = draw.textbbox((0, 0), line, font=normal_font)
         line_height = text_bbox[3] - text_bbox[1]
         total_text_height += line_height
     total_text_height += line_spacing * (len(lines) - 1)  # 줄 간격 추가
 
     # 새로운 높이 계산 (상단 텍스트 + 기존 텍스트)
-    new_height = height + plan_line_height + total_text_height + 20  # 텍스트를 위한 공간 + 20px 여유
+    new_height = height + plan_line_height + total_text_height + 30  # 텍스트를 위한 공간 + 20px 여유
     new_img = Image.new('RGB', (width, new_height), color='white')
     new_img.paste(img, (0, 0))
 
     # 이미지에 텍스트 추가
     draw = ImageDraw.Draw(new_img)
-    # plantext 상단 텍스트
-    text_y = 10  # 상단에 넣기 위해 y를 10px로 설정
-    for line in plan_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_x = (width - text_width) // 2
-        draw.text((text_x, text_y), line, font=font, fill='black')
-        text_y += text_bbox[3] - text_bbox[1] + line_spacing
 
-    # 기존 text 하단 텍스트
-    text_y = height + plan_line_height + 10  # 기존 이미지 하단부터 시작
-    for line in lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+    # 상단 텍스트를 하단으로 이동 (크게 변경된 텍스트)
+    text_y = height + 10  # 기존 이미지 하단부터 시작 (상단 텍스트를 이미지 하단으로 이동)
+    for line in plan_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=bold_font)
         text_width = text_bbox[2] - text_bbox[0]
         text_x = (width - text_width) // 2
-        draw.text((text_x, text_y), line, font=font, fill='black')
+        draw.text((text_x, text_y), line, font=bold_font, fill='black')
+        text_y += text_bbox[3] - text_bbox[1] + 15  # 15px의 여백 추가
+
+    # 상단 텍스트와 하단 텍스트 사이의 여백 추가
+    text_y += 15  # 15px의 여백 추가
+
+    # 기존 text (하단 텍스트는 작은 폰트)
+    for line in lines:
+        text_bbox = draw.textbbox((0, 0), line, font=normal_font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_x = (width - text_width) // 2
+        draw.text((text_x, text_y), line, font=normal_font, fill='black')
         text_y += text_bbox[3] - text_bbox[1] + line_spacing
 
     return new_img
+
 
 # 사람 특정해서 배경 변경 
 def apply_new_background(input_image_path, background_image_path):
@@ -395,7 +407,7 @@ def apply_new_background(input_image_path, background_image_path):
 #이미지 경로받기
 async def create_background(background_image_path):
     img_path = os.path.join(background_image_path, "back")  # 배경 이미지 경로
-    prompt = "Simple background"
+    prompt = "Plain background"
     dynamic_seed = torch.randint(0, 2**32, (1,), dtype=torch.int64).item()  # 동적 시드 생성
     
     # 비동기적으로 이미지를 생성
