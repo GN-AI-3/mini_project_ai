@@ -1,30 +1,31 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import StreamingResponse
 from typing import List
 from pykospacing import Spacing
-from PIL import Image
-from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image, ImageDraw, ImageFont
+from fastapi.middleware.cors import CORSMiddleware  # 한 번만 임포트
 from fastapi.responses import JSONResponse
 from transformers import pipeline
 import os
 import kss
 import re
 import io
-import csv
-import random
-import time
+import torch
+import mediapipe as mp
 
 # student_evaluation.py 모듈 임포트
 import student_evaluation as se
+from io import BytesIO
 import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
 import cv2
 import numpy as np
 from google.cloud import vision
 from pdf2image import convert_from_bytes
-
+from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionPipeline
 import insightface
+
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'mini-api-test-a0538c7dd495.json'
 
@@ -56,6 +57,16 @@ face_model.prepare(ctx_id=0)
 
 VERIFICATION_KEYWORDS = ["행동 특성 및 종합의견", "학교", "반"]
 
+# Stable Diffusion 모델 로딩
+pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
+pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
+
+# 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
+makeImage = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
+makeImage.to("cuda") 
+
+# MediaPipe Selfie Segmentation 설정
+mp_selfie_segmentation = mp.solutions.selfie_segmentation
 #######################################################################################################
 # API 설정
 # 
@@ -66,8 +77,6 @@ async def process_pdf(
     file: UploadFile = File(...)
 ):
     """Processes a PDF, extracts face from first page, and OCR from last pages."""
-    final_start_time = time.time()
-    start_time = time.time()
     pdf_bytes = await file.read()
     images = convert_from_bytes(pdf_bytes, dpi=150)
 
@@ -85,39 +94,41 @@ async def process_pdf(
     combined_text = " ".join(ocr_results)
     is_verified = verify_text(combined_text)
 
-    end_time = time.time()
-    print(f"PDF 처리 시간: {end_time - start_time}초")
-    print("ocr_results", ocr_results)
-
     if is_verified == False:
         return {"error": "Not a school record."}
     
     try:
+
+
         # PDF 처리 및 텍스트 추출
         extracted_text = ocr_results
         
         # 추출된 텍스트를 문장 단위로 분리
-        start_time = time.time()
         sentences = text_split(extracted_text)
-        print("sentences", sentences)
-        end_time = time.time()
-        print(f"텍스트 분리 시간: {end_time - start_time}초")
         
         # 문장을 장/단점으로 분석
-        start_time = time.time()
         analysis_result = text_prosCons(sentences)
-        print("analysis_result", analysis_result)
-        end_time = time.time()
-        print(f"장/단점 분석 시간: {end_time - start_time}초")
 
-        final_end_time = time.time()
-        print(f"최종 처리 시간: {final_end_time - final_start_time}초")
+        # 장/단점 요약
+        summarizeProsCon = summarizeProsCons(analysis_result)
+
+        # 이미지 변경  
+        background = await create_background(os.path.dirname(face_task))  # 배경 생성
+        img=get_image(image_filename=face_task,background=background,text=summarizeProsCon,plantext=analysis_result)
+
+        # 이미지를 바이트 스트림으로 변환
+        img_byte_arr = BytesIO()
+        img.save(img_byte_arr, format="PNG")
+        img_byte_arr.seek(0)  # 스트림 포인터를 처음으로 이동
         
+        # 이미지 스트리밍 반환
+        response = StreamingResponse(img_byte_arr, media_type="image/png")
         return JSONResponse(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
                 "advantages": analysis_result["장점"],
-                "disadvantages": analysis_result["단점"]
+                "disadvantages": analysis_result["단점"],
+                "response": response
             },
             status_code=200
         )
@@ -142,7 +153,7 @@ def verify_text(text):
 async def extract_text_from_image(image):
     """Runs OCR on an image using Google Cloud Vision API."""
     loop = asyncio.get_running_loop()
-    image_np = np.asarray(image)
+    image_np = np.array(image)
     return await loop.run_in_executor(executor, google_vision_ocr, image_np)
 
 
@@ -158,7 +169,7 @@ def google_vision_ocr(image_np):
 async def recognize_faces(image):
     """Detects a face in an image asynchronously."""
     loop = asyncio.get_running_loop()
-    img = np.asarray(image)
+    img = np.array(image)
     return await loop.run_in_executor(executor, detect_faces, img)
 
 
@@ -194,13 +205,11 @@ def detect_faces(img, save_dir="faces"):
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
 def text_split(
-    text: List[str]
+    text: str
 ):
-    text = text[0]
     processed_text = text.replace("\n", " ").strip()
     processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
     processed_text = re.sub(r'문서확인번호: .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'문서 확인번호: .+? \(신청인 : .+?\)', '', processed_text)
     processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
     processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
 
@@ -240,25 +249,7 @@ def text_prosCons(
 def summarizeProsCons(
     prosCons: list[str]
 ):
-    # CSV 파일 읽기
-    predefined_data = []
-    with open('predefined_titles_and_descriptions.csv', mode='r', encoding='utf-8') as file:
-        reader = csv.reader(file)
-        for row in reader:
-            predefined_data.append(row)
-
-    # 선정하는 로직 추가 예정
-    random_num = random.randint(0, 97)
-    selected = predefined_data[random_num]
-
-    # # 사용 예시
-    # input_text = "이 학생은 리더십이 뛰어나며 팀워크를 중시합니다."
-    # keyword, description = find_title_and_description(input_text)
-
-    # print("제목:", keyword)
-    # print("설명글:", description)
-    
-    return selected[0], selected[2]
+    pass
 
 
 # 요약된 텍스트 구어체로 변경
@@ -279,22 +270,169 @@ def text_to_speech(
     return converted_texts
 
 
-# 이미지 카툰화
-def image_process(
-    image_path: str,
-    image_bytes: bytes
-):
-    # image = image_process1(image_path)
-    # image = image_process2(image_bytes)
-    pass
 
+# 이미지 카툰화
+def image_process(image_path: str, prompt="Randomly transformed cartoon image with unique features and playful details.", strength=0.6, guidance_scale=8, num_inference_steps=50):
+    image = Image.open(image_path)
+    image = image.resize((512, 512)) 
+
+    result = pipe(prompt=prompt, image=image, strength=strength, guidance_scale=guidance_scale, num_inference_steps=num_inference_steps).images[0]
+    
+    return result
 
 # 요약된 장/단점과 카툰화된 이미지를 하나의 이미지로 생성
 def get_image(
     image_path: str,
-    image_bytes: bytes,
-    prosCons: list[str]
+    background: str,
+    text: str,
+    plantext: str
 ):
-    # image = image_process1(image_path)
-    # image = image_process2(image_bytes)
-    pass
+    apply_background = apply_new_background(image_path, background)
+    
+    # 4. 텍스트를 이미지 하단에 추가
+    cartoon_image_with_text = add_text_below_image(apply_background, text,plantext)
+    return cartoon_image_with_text
+
+
+# 텍스트를 최대 너비에 맞춰 분할하는 함수
+def wrap_text(draw, font, text, max_width):
+    lines = []
+    words = text.split(' ')
+    current_line = ""
+    for word in words:
+        test_line = current_line + " " + word if current_line else word
+        test_bbox = draw.textbbox((0, 0), test_line, font=font)
+        test_width = test_bbox[2] - test_bbox[0]
+        if test_width <= max_width:
+            current_line = test_line
+        else:
+            lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+    return lines
+
+# 택스트 추가 이미지 생성
+def add_text_below_image(input_image, text, plantext):
+    img = input_image
+    try:
+        font = ImageFont.truetype("fonts/malgun.ttf", 30)  # 한글 폰트 경로
+    except IOError:
+        font = ImageFont.load_default()  # 기본 폰트
+
+    width, height = img.size
+    draw = ImageDraw.Draw(img)
+
+    # 텍스트를 이미지 상단에 넣기 위한 준비
+    max_width = width * 0.7  # 양옆에 여유를 두기 위해 120%로 설정
+    plan_lines = wrap_text(draw, font, plantext, max_width)
+
+    # 상단 텍스트의 높이 계산
+    plan_line_height = 0
+    for line in plan_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        line_height = text_bbox[3] - text_bbox[1]
+        plan_line_height += line_height
+    plan_line_height += 20  # 줄 간격 추가
+
+    # 기존 텍스트를 아래에 추가하는 계산
+    max_width = width * 1.2 
+    lines = wrap_text(draw, font, text, max_width)
+    line_spacing = 20
+    total_text_height = 0
+    for line in lines:
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        line_height = text_bbox[3] - text_bbox[1]
+        total_text_height += line_height
+    total_text_height += line_spacing * (len(lines) - 1)  # 줄 간격 추가
+
+    # 새로운 높이 계산 (상단 텍스트 + 기존 텍스트)
+    new_height = height + plan_line_height + total_text_height + 20  # 텍스트를 위한 공간 + 20px 여유
+    new_img = Image.new('RGB', (width, new_height), color='white')
+    new_img.paste(img, (0, 0))
+
+    # 이미지에 텍스트 추가
+    draw = ImageDraw.Draw(new_img)
+    # plantext 상단 텍스트
+    text_y = 10  # 상단에 넣기 위해 y를 10px로 설정
+    for line in plan_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_x = (width - text_width) // 2
+        draw.text((text_x, text_y), line, font=font, fill='black')
+        text_y += text_bbox[3] - text_bbox[1] + line_spacing
+
+    # 기존 text 하단 텍스트
+    text_y = height + plan_line_height + 10  # 기존 이미지 하단부터 시작
+    for line in lines:
+        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_x = (width - text_width) // 2
+        draw.text((text_x, text_y), line, font=font, fill='black')
+        text_y += text_bbox[3] - text_bbox[1] + line_spacing
+
+    return new_img
+
+# 사람 특정해서 배경 변경 
+def apply_new_background(input_image_path, background_image_path):
+    # 입력 이미지와 배경 이미지를 파일 경로로 열기
+    input_image = Image.open(input_image_path).convert("RGB")  # RGB 모드로 열기
+    background_image = Image.open(background_image_path).convert("RGB")  # RGB 모드로 열기
+    # PIL 이미지를 NumPy 배열로 변환 (OpenCV에서 사용하기 위해)
+    image_rgb = cv2.cvtColor(np.array(input_image), cv2.COLOR_RGB2BGR)
+    with mp_selfie_segmentation.SelfieSegmentation(model_selection=1) as selfie_segmentation:
+        # 사람을 구분하기 위한 Segmentation 처리
+        result = selfie_segmentation.process(image_rgb)
+        condition = result.segmentation_mask > 0.5  # 사람 부분만 추출
+        # 배경을 흰색으로 설정
+        image_no_bg = image_rgb.copy()
+        image_no_bg[~condition] = 255  # 배경을 흰색으로
+        # 배경 이미지를 OpenCV 형태로 변환
+        background_resized = cv2.cvtColor(np.array(background_image), cv2.COLOR_RGB2BGR)
+        new_background_resized = cv2.resize(background_resized, (image_rgb.shape[1], image_rgb.shape[0]))
+        # 사람 부분은 원본 이미지에서, 배경 부분은 새로운 배경으로 설정
+        final_image = np.where(condition[:, :, None], image_rgb, new_background_resized)
+        # 결과 이미지를 PIL 객체로 변환
+        final_image_pil = Image.fromarray(cv2.cvtColor(final_image, cv2.COLOR_BGR2RGB))
+        return final_image_pil
+
+# 비동기 이미지 생성 함수
+#이미지 경로받기
+async def create_background(background_image_path):
+    img_path = os.path.join(background_image_path, "back")  # 배경 이미지 경로
+    prompt = "Simple background"
+    dynamic_seed = torch.randint(0, 2**32, (1,), dtype=torch.int64).item()  # 동적 시드 생성
+    
+    # 비동기적으로 이미지를 생성
+    background = makeImage(
+        prompt,
+        height=512,
+        width=512,
+        guidance_scale=6.0,
+        num_inference_steps=20,
+        generator=torch.Generator("cpu").manual_seed(dynamic_seed)  # 동적 시드를 설정
+    ).images[0]
+    
+    background = background.convert("RGB")  # RGB로 변환
+    background = background.resize((512, 512))  # 배경 크기 변경
+    background.save(img_path)  # 이미지 저장
+    
+    return img_path  # 생성된 이미지 경로 리턴
+def delete_image(image_filename, background):
+    try:
+        if os.path.exists(image_filename):
+            os.remove(image_filename)
+            print(f"{image_filename} 파일이 삭제되었습니다.")
+        else:
+            print(f"{image_filename} 파일이 존재하지 않습니다.")
+    except Exception as e:
+        print(f"파일 삭제 중 오류가 발생했습니다: {e}")
+
+    try:
+        if os.path.exists(background):
+            os.remove(background)
+            print(f"{background} 파일이 삭제되었습니다.")
+        else:
+            print(f"{background} 파일이 존재하지 않습니다.")
+    except Exception as e:
+        print(f"배경 파일 삭제 중 오류가 발생했습니다: {e}")
