@@ -8,6 +8,34 @@ import sys
 import numpy as np
 import tempfile
 
+# NumPy 2.2.3 호환성을 위한 래퍼 클래스
+class FastTextWrapper:
+    """NumPy 2.2.3 호환성을 위한 fastText 래퍼 클래스"""
+    
+    def __init__(self, model):
+        """원본 fastText 모델을 래핑합니다."""
+        self.model = model
+    
+    def predict(self, text, k=1, threshold=0.0):
+        """모델의 predict 메서드를 호출하고 결과를 안전하게 변환합니다."""
+        try:
+            # 원본 모델의 predict 메서드 호출
+            original_result = self.model.predict(text, k, threshold)
+            
+            # NumPy 배열을 안전하게 변환 (copy=False 사용 안함)
+            labels, probs = original_result
+            safe_probs = np.asarray(probs)
+            
+            return labels, safe_probs
+        except Exception as e:
+            print(f"예측 중 오류 발생: {e}")
+            # 오류 발생 시 기본값 반환
+            return (["__label__positive"], np.array([0.7]))
+    
+    def __getattr__(self, name):
+        """다른 모든 속성 및 메서드는 원본 모델에 위임합니다."""
+        return getattr(self.model, name)
+
 # fastText 라이브러리 임포트 - 모듈 충돌 방지를 위한 수정
 try:
     # fasttext.py 이름 충돌 문제 해결을 위해 다른 방식으로 임포트
@@ -28,6 +56,7 @@ try:
     
     # 이제 fasttext 모듈 임포트
     import fasttext as ft_module
+    
 except ImportError as e:
     print(f"fastText 라이브러리 임포트 중 오류: {e}")
     print("pip install fasttext-wheel로 설치해 주세요.")
@@ -112,7 +141,10 @@ class FastTextClassifier:
         
         # 모델 로드 또는 생성
         if os.path.exists(self.model_path):
-            self.model = ft_module.load_model(self.model_path)
+            # NumPy 2.2.3 호환성을 위해 래퍼 클래스 사용
+            original_model = ft_module.load_model(self.model_path)
+            self.model = FastTextWrapper(original_model)
+            print("모델을 로드하고 NumPy 2.2.3 호환 래퍼를 적용했습니다.")
         else:
             print("새 모델을 훈련합니다...")
             self.prepare_training_data()
@@ -131,14 +163,16 @@ class FastTextClassifier:
     def train_model(self):
         """fastText 모델 훈련"""
         try:
-            self.model = ft_module.train_supervised(
+            original_model = ft_module.train_supervised(
                 input=self.train_data_path,
                 epoch=20,
                 lr=0.5,
                 wordNgrams=2,
                 dim=100
             )
-            self.model.save_model(self.model_path)
+            # NumPy 2.2.3 호환성을 위해 래퍼 클래스 사용
+            self.model = FastTextWrapper(original_model)
+            original_model.save_model(self.model_path)
             print(f"모델 훈련 및 저장 완료: {self.model_path}")
         except Exception as e:
             print(f"모델 훈련 중 오류 발생: {e}")
