@@ -234,23 +234,50 @@ def detect_faces(img, save_dir="faces"):
 
     return jpg_path, png_path
 
+def remove_before_second_keyword(text: str, keyword: str) -> str:
+    # 단순히 문자열 포함 여부로 확인
+    if keyword not in text:
+        return text
+        
+    # 첫 번째 키워드 찾기
+    first_index = text.find(keyword)
+    
+    # 두 번째 키워드 찾기 (첫 번째 키워드 이후부터)
+    second_index = text.find(keyword, first_index + len(keyword))
+    if second_index == -1:
+        return text[first_index:]
+        
+    # 두 번째 키워드부터의 텍스트 반환
+    return text[second_index:]
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
-def text_split(
-    text: str
-):  
-    processed_text = remove_before_keyword(text, "행동 특성 및 종합의견")
-    processed_text = text.replace("\n", " ").strip()
-    processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCR Result for Page : ", "").replace("KOR", "")
-    processed_text = re.sub(r'문서확인번호 .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'문서 확인번호 .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+', '', processed_text)
-    processed_text = re.sub(r'\b행동 특성 및 종합의견\b', '', processed_text)
+def text_split(text: str):  
+    # 먼저 특정 패턴만 삭제
+    patterns = [
+        r'\b학년\b',
+        r'\b\d+\b',
+        r'문서확인번호 .+? \(신청인 : .+?\)',
+        r'문서 확인번호 .+? \(신청인 : .+?\)',
+        r'\S+학교 .*?년 .*?월 .*?일\s*.*?/.*?\s*반\s*.*?\s*번호\s*.*?\s*이름\s*\S+'
+    ]
+    
+    processed_text = text
+    for pattern in patterns:
+        processed_text = re.sub(pattern, '', processed_text)
 
-    processed_text = re.sub(r'학교 .+? \(신청인 : .+?\)', '', processed_text)
-    processed_text = re.sub(r'\b학년\b', '', processed_text)
-    processed_text = re.sub(r'\b\d+\b', '', processed_text)
+    print("processed_text1 : ", processed_text)
+    
+    # 그 다음 줄바꿈과 공백 제거
+    processed_text = processed_text.replace("\n", " ").strip()
     processed_text = processed_text.replace(" ", "")
+
+    print("processed_text2 : ", processed_text)
+    
+    # 나머지 처리
+    processed_text = remove_before_second_keyword(processed_text, "행동특성및종합의견")
+    print("processed_text3 : ", processed_text)
+    processed_text = processed_text.replace("gov.kr", "").replace("정부24", "").replace("OCRResultforPage:", "").replace("KOR", "").replace("행동특성및종합의견", "")
+    print("processed_text4 : ", processed_text)
 
     try:
         spacing = Spacing()
@@ -259,14 +286,10 @@ def text_split(
         print(f"띄어쓰기 교정 중 오류 발생: {e}")
         corrected_text = processed_text
 
+    print("corrected_text : ", corrected_text)
+
     sentences = kss.split_sentences(corrected_text)
     return [sentence.strip() for sentence in sentences if sentence.strip()]
-
-def remove_before_keyword(text: str, keyword: str) -> str:
-    index = text.find(keyword)
-    if index != -1:  
-        return text[index:]
-    return text
 
 # 문장 단위로 구분된 텍스트 장/단점 구분
 def text_prosCons(
