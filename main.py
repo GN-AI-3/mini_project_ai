@@ -72,7 +72,12 @@ face_model.prepare(ctx_id=0)
 embedding_model_instance = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
 
 # Stable Diffusion 모델 로딩
-pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
+pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16
+)
+# LoRA 가중치 로드 (Portrait Sketch Style LoRA)
+pipe.load_lora_weights(".", weight_name="sketch_sumiao.safetensors")
 pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
 
 # 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
@@ -386,16 +391,14 @@ def text_to_speech(
 def image_process(image_path: str):
     image = Image.open(image_path)
     image = image.resize((512, 512))
-
-    # 카툰화 효과를 위한 프롬프트
-    prompt = "Randomly transformed cartoon image with unique features and playful details."
     
     result = pipe(
-        prompt=prompt,
+        prompt="sketch, sumiao, black and white style",  # 필수 트리거 워드와 권장 워드
         image=image,
-        strength=0.6,  # 변환 강도 조절 (0.0 ~ 1.0)
-        guidance_scale=8,  # 프롬프트 영향력
-        num_inference_steps=50  # 변환 단계 수
+        strength=0.7,  # 권장 범위 0.7~1.0 내에서 설정
+        guidance_scale=3.0,
+        num_inference_steps=30,
+        cross_attention_kwargs={"scale": 0.4}  # LoRA 가중치를 0.8로 설정
     ).images[0]
     
     # 흰색 배경 생성
@@ -418,8 +421,8 @@ def get_image(
     # 1. 이미지 카툰화
     cartoon_image = image_process(image_path)
     
-    # 검은색 배경 생성 (512x512)
-    black_bg = Image.new('RGB', (512, 512), color='black')
+    # 흰색 배경 생성 (512x512)
+    white_bg = Image.new('RGB', (512, 512), color='white')
     
     # 카툰화된 이미지 불러오기
     cartoon = Image.open(cartoon_image)
@@ -441,11 +444,11 @@ def get_image(
     y_offset = 40  # 상단에서 40px 아래에 배치
     
     # 이미지 합성
-    black_bg.paste(cartoon, (x_offset, y_offset))
+    white_bg.paste(cartoon, (x_offset, y_offset))
     
     # 4. 텍스트를 이미지 하단에 추가 (실제 이미지 높이 전달)
     actual_image_height = y_offset + target_height + 70  # 실제 이미지 높이 + 여백
-    cartoon_image_with_text = add_text_below_image(black_bg, text, plantext, actual_image_height)
+    cartoon_image_with_text = add_text_below_image(white_bg, text, plantext, actual_image_height)
     return cartoon_image_with_text
 
 
@@ -484,13 +487,13 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
     img = input_image
     try:
         # 제목용 폰트 (가장 큰 크기)
-        main_title_font = ImageFont.truetype("park.ttf", 34)
+        main_title_font = ImageFont.truetype("park.ttf", 36)  # 34 -> 36
         # 설명용 폰트 (중간 크기)
-        description_font = ImageFont.truetype("park.ttf", 22)
+        description_font = ImageFont.truetype("park.ttf", 24)  # 22 -> 24
         # 본문용 폰트 (가장 작은 크기)
-        body_font = ImageFont.truetype("park.ttf", 16)
+        body_font = ImageFont.truetype("park.ttf", 18)  # 16 -> 18
         # 상단 제목용 폰트
-        top_title_font = ImageFont.truetype("park.ttf", 34)
+        top_title_font = ImageFont.truetype("park.ttf", 36)  # 34 -> 36
     except IOError:
         main_title_font = ImageFont.load_default()
         description_font = ImageFont.load_default()
@@ -505,15 +508,15 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
     top_title_bbox = ImageDraw.Draw(img).textbbox((0, 0), top_title, font=top_title_font)
     top_title_height = top_title_bbox[3] - top_title_bbox[1] + 20  # 여백 축소
     
-    # 새로운 이미지 생성 (검은색 배경)
-    new_img = Image.new('RGB', (width, height + top_title_height), color='black')
+    # 새로운 이미지 생성 (흰색 배경)
+    new_img = Image.new('RGB', (width, height + top_title_height), color='white')
     new_img.paste(img, (0, top_title_height))  # 기존 이미지를 아래로 이동
     
     draw = ImageDraw.Draw(new_img)
     
-    # 상단 제목 그리기 (흰색)
+    # 상단 제목 그리기 (검정색)
     title_x = (width - (top_title_bbox[2] - top_title_bbox[0])) // 2  # 가운데 정렬
-    draw.text((title_x, 10), top_title, font=top_title_font, fill='white')
+    draw.text((title_x, 10), top_title, font=top_title_font, fill='black')
 
     # plantext에서 description과 title 분리 (순서 변경)
     description, title = plantext.split('\n', 1)
@@ -575,7 +578,7 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
 
     # 새로운 높이 계산 (간격 축소)
     final_height = actual_image_height + 5 + title_height + 15 + description_height + 20 + plan_height + 20  # 불필요한 여백 제거
-    final_img = Image.new('RGB', (width, final_height), color='black')
+    final_img = Image.new('RGB', (width, final_height), color='white')
     final_img.paste(new_img, (0, 0))
 
     draw = ImageDraw.Draw(final_img)
@@ -589,7 +592,7 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
         line_width = text_bbox[2] - text_bbox[0]
         x = (width - line_width) // 2  # 가운데 정렬을 위한 x 좌표 계산
         line_height = text_bbox[3] - text_bbox[1]
-        draw.text((x, y_offset), line, font=description_font, fill='white')
+        draw.text((x, y_offset), line, font=description_font, fill='black')
         y_offset += line_height + 5
 
     y_offset += 20  # description과 title 사이 간격 증가
@@ -602,12 +605,12 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
         line_width = text_bbox[2] - text_bbox[0]
         x = (width - line_width) // 2  # 가운데 정렬을 위한 x 좌표 계산
         line_height = text_bbox[3] - text_bbox[1]
-        draw.text((x, y_offset), line_with_quotes, font=main_title_font, fill='white')
+        draw.text((x, y_offset), line_with_quotes, font=main_title_font, fill='black')
         y_offset += line_height + 5
 
-    # 구분선 추가 (흰색)
+    # 구분선 추가 (검정색)
     y_offset += 15  # 구분선 위 여백
-    draw.line([(width * 0.1, y_offset), (width * 0.9, y_offset)], fill='white', width=1)
+    draw.line([(width * 0.1, y_offset), (width * 0.9, y_offset)], fill='black', width=1)
     y_offset += 15  # 구분선 아래 여백
 
     # 장점 텍스트 그리기 (가장 작은 글씨)
@@ -624,7 +627,7 @@ def add_text_below_image(input_image, text, plantext, actual_image_height):
         else:
             # 번호가 있는 줄
             x = width * 0.1
-        draw.text((x, y_offset), line, font=body_font, fill='white')
+        draw.text((x, y_offset), line, font=body_font, fill='black')
         y_offset += line_height + 8  # 줄간격 증가 (3 -> 8)
 
     return final_img
@@ -698,7 +701,7 @@ async def create_background(background_image_path):
     """
     
     # 흰색 배경 이미지 생성
-    white_bg = Image.new('RGB', (512, 512), color='black')
+    white_bg = Image.new('RGB', (512, 512), color='white')
     img_path = os.path.join(background_image_path, "back.png")
     white_bg.save(img_path, format="PNG")
     

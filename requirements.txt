@@ -16,6 +16,7 @@ transformers
 torch --index-url https://download.pytorch.org/whl/cu121
 accelerate
 sentence_transformers
+peft
 # acres==0.3.0
 # aiofiles==24.1.0
 # albucore==0.0.23
