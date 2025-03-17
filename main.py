@@ -445,9 +445,9 @@ def add_text_below_image(input_image, text, plantext):
     img = input_image
     try:
         # 제목용 폰트 (더 큰 크기)
-        title_font = ImageFont.truetype("fonts/malgun.ttf", 24)
+        title_font = ImageFont.truetype("fonts/malgun.ttf", 14)
         # 본문용 폰트 (더 작은 크기)
-        body_font = ImageFont.truetype("fonts/malgun.ttf", 20)
+        body_font = ImageFont.truetype("fonts/malgun.ttf", 28)
     except IOError:
         title_font = ImageFont.load_default()
         body_font = ImageFont.load_default()
