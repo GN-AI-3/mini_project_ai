@@ -28,6 +28,7 @@ from google.cloud import vision
 from pdf2image import convert_from_bytes
 from diffusers import StableDiffusionImg2ImgPipeline, StableDiffusionPipeline
 import insightface
+import base64
 
 ####################################################################################################### 
 # 전역 변수 선언
@@ -132,24 +133,41 @@ async def process_pdf(
 
         # 장/단점 요약
         start_time = time.time()
-        summarizeProsCon = get_most_similar_sentence(analysis_result[0])
+        title, description, score = get_most_similar_sentence(analysis_result["장점"][0] if analysis_result["장점"] else "")
+        summarized_text = f"{title}\n{description}"
         end_time = time.time()
-        print("장/단점 요약 결과:", summarizeProsCon)
+        print("장/단점 요약 결과:", summarized_text)
         print(f"장/단점 요약 시간: {end_time - start_time}초")
 
         # 이미지 변경  
         start_time = time.time()
-        face_jpg_path, face_png_path = face_task  # 튜플 언패킹
+        face_jpg_path = await face_task  # await를 사용하여 실제 경로 얻기
+        if face_jpg_path is None:
+            return JSONResponse(
+                content={
+                    "message": "얼굴을 찾을 수 없습니다."
+                },
+                status_code=400
+            )
         background = await create_background(os.path.dirname(face_jpg_path))  # 배경 생성
-        img = get_image(image_filename=face_jpg_path, background=background, text=summarizeProsCon, plantext=analysis_result)
+        # analysis_result를 문자열로 변환
+        plantext_str = "\n".join(analysis_result["장점"])
+        img = get_image(image_path=face_jpg_path, background=background, text=plantext_str, plantext=summarized_text)
+
+        # 최종 이미지를 faces 폴더에 저장
+        result_filename = f"result_{os.path.basename(face_jpg_path)}"
+        result_path = os.path.join("faces", result_filename)
+        img.save(result_path, format="PNG")
+        print(f"최종 이미지가 저장되었습니다: {result_path}")
 
         # 이미지를 바이트 스트림으로 변환
         img_byte_arr = BytesIO()
         img.save(img_byte_arr, format="PNG")
         img_byte_arr.seek(0)  # 스트림 포인터를 처음으로 이동
         
-        # 이미지 스트리밍 반환
-        response = StreamingResponse(img_byte_arr, media_type="image/png")
+        # 이미지를 base64로 인코딩
+        image_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        
         end_time = time.time()
         print(f"이미지 처리 시간: {end_time - start_time}초")
         final_end_time = time.time()
@@ -159,8 +177,7 @@ async def process_pdf(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
                 "advantages": analysis_result["장점"],
-                "disadvantages": analysis_result["단점"],
-                "response": response
+                "image": image_base64  # base64로 인코딩된 이미지
             },
             status_code=200
         )
@@ -227,12 +244,9 @@ def detect_faces(img, save_dir="faces"):
 
     unique_id = uuid.uuid4().hex
     jpg_path = os.path.join(save_dir, f"face_{unique_id}.jpg")
-    png_path = os.path.join(save_dir, f"face_{unique_id}.png")
 
     cv2.imwrite(jpg_path, face_crop_bgr)
-    cv2.imwrite(png_path, face_crop_bgr)
-
-    return jpg_path, png_path
+    return jpg_path
 
 def remove_before_second_keyword(text: str, keyword: str) -> str:
     # 단순히 문자열 포함 여부로 확인
@@ -300,8 +314,7 @@ def text_prosCons(
     try:
         # 전달된 텍스트 분석
         analysis_result = se.analyze_student_evaluation(text, max_items=max_items)
-        result = analysis_result.get("장점")
-        return result
+        return analysis_result  # 딕셔너리 형태로 반환
     except Exception as e:
         print(f"텍스트 분석 중 오류 발생: {e}")
         # 오류 발생 시 빈 결과 반환
@@ -367,13 +380,26 @@ def text_to_speech(
 
 
 # 이미지 카툰화
-def image_process(image_path: str, prompt="Randomly transformed cartoon image with unique features and playful details.", strength=0.6, guidance_scale=8, num_inference_steps=50):
+def image_process(image_path: str):
     image = Image.open(image_path)
-    image = image.resize((512, 512)) 
+    image = image.resize((512, 512))
 
-    result = pipe(prompt=prompt, image=image, strength=strength, guidance_scale=guidance_scale, num_inference_steps=num_inference_steps).images[0]
+    # 카툰화 효과를 위한 프롬프트
+    prompt = "Randomly transformed cartoon image with unique features and playful details."
     
-    return result
+    result = pipe(
+        prompt=prompt,
+        image=image,
+        strength=0.6,  # 변환 강도 조절 (0.0 ~ 1.0)
+        guidance_scale=8,  # 프롬프트 영향력
+        num_inference_steps=50  # 변환 단계 수
+    ).images[0]
+    
+    # 결과 이미지를 임시 파일로 저장
+    temp_path = os.path.join(os.path.dirname(image_path), "temp_cartoon.png")
+    result.save(temp_path)
+    
+    return temp_path
 
 # 요약된 장/단점과 카툰화된 이미지를 하나의 이미지로 생성
 def get_image(
@@ -382,10 +408,17 @@ def get_image(
     text: str,
     plantext: str
 ):
+    # 1. 이미지 카툰화
+    cartoon_image = image_process(image_path)
+    
+    # 2. 배경 변경
     apply_background = apply_new_background(image_path, background)
     
+    # 3. 카툰화된 이미지와 배경 합성
+    final_image = apply_new_background(cartoon_image, background)
+    
     # 4. 텍스트를 이미지 하단에 추가
-    cartoon_image_with_text = add_text_below_image(apply_background, text,plantext)
+    cartoon_image_with_text = add_text_below_image(final_image, text, plantext)
     return cartoon_image_with_text
 
 
@@ -411,60 +444,66 @@ def wrap_text(draw, font, text, max_width):
 def add_text_below_image(input_image, text, plantext):
     img = input_image
     try:
-        font = ImageFont.truetype("fonts/malgun.ttf", 30)  # 한글 폰트 경로
+        # 제목용 폰트 (더 큰 크기)
+        title_font = ImageFont.truetype("fonts/malgun.ttf", 24)
+        # 본문용 폰트 (더 작은 크기)
+        body_font = ImageFont.truetype("fonts/malgun.ttf", 20)
     except IOError:
-        font = ImageFont.load_default()  # 기본 폰트
+        title_font = ImageFont.load_default()
+        body_font = ImageFont.load_default()
 
     width, height = img.size
     draw = ImageDraw.Draw(img)
 
-    # 텍스트를 이미지 상단에 넣기 위한 준비
-    max_width = width * 0.7  # 양옆에 여유를 두기 위해 120%로 설정
-    plan_lines = wrap_text(draw, font, plantext, max_width)
+    # 장점 텍스트(plantext)를 줄 단위로 분리
+    max_width = width * 0.9  # 양옆에 여유를 두기 위해 90%로 설정
+    plan_lines = wrap_text(draw, body_font, plantext, max_width)
 
-    # 상단 텍스트의 높이 계산
-    plan_line_height = 0
+    # 장점 텍스트의 높이 계산
+    plan_height = 0
     for line in plan_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_bbox = draw.textbbox((0, 0), line, font=body_font)
         line_height = text_bbox[3] - text_bbox[1]
-        plan_line_height += line_height
-    plan_line_height += 20  # 줄 간격 추가
+        plan_height += line_height + 3  # 줄 간격 3px 추가
 
-    # 기존 텍스트를 아래에 추가하는 계산
-    max_width = width * 1.2 
-    lines = wrap_text(draw, font, text, max_width)
-    line_spacing = 20
-    total_text_height = 0
-    for line in lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+    # 요약 텍스트(text)를 이미지 하단에 추가
+    summary_lines = wrap_text(draw, title_font, text, max_width)
+
+    # 요약 텍스트의 높이 계산
+    summary_height = 0
+    for line in summary_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=title_font)
         line_height = text_bbox[3] - text_bbox[1]
-        total_text_height += line_height
-    total_text_height += line_spacing * (len(lines) - 1)  # 줄 간격 추가
+        summary_height += line_height + 5  # 줄 간격 5px 추가
 
-    # 새로운 높이 계산 (상단 텍스트 + 기존 텍스트)
-    new_height = height + plan_line_height + total_text_height + 20  # 텍스트를 위한 공간 + 20px 여유
+    # 새로운 높이 계산 (기존 이미지 + 여백 + 장점 텍스트 + 구분선 + 요약 텍스트)
+    new_height = height + 20 + plan_height + 20 + summary_height + 20
     new_img = Image.new('RGB', (width, new_height), color='white')
     new_img.paste(img, (0, 0))
 
-    # 이미지에 텍스트 추가
     draw = ImageDraw.Draw(new_img)
-    # plantext 상단 텍스트
-    text_y = 10  # 상단에 넣기 위해 y를 10px로 설정
+    
+    # 장점 텍스트 그리기 (이미지 바로 아래)
+    y_offset = height + 20  # 기존 이미지 아래 20px 여백
     for line in plan_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+        text_bbox = draw.textbbox((0, 0), line, font=body_font)
         text_width = text_bbox[2] - text_bbox[0]
-        text_x = (width - text_width) // 2
-        draw.text((text_x, text_y), line, font=font, fill='black')
-        text_y += text_bbox[3] - text_bbox[1] + line_spacing
+        x = (width - text_width) // 2
+        draw.text((x, y_offset), line, font=body_font, fill='black')
+        y_offset += text_bbox[3] - text_bbox[1] + 3
 
-    # 기존 text 하단 텍스트
-    text_y = height + plan_line_height + 10  # 기존 이미지 하단부터 시작
-    for line in lines:
-        text_bbox = draw.textbbox((0, 0), line, font=font)
+    # 구분선 추가
+    y_offset += 10
+    draw.line([(width * 0.1, y_offset), (width * 0.9, y_offset)], fill='gray', width=1)
+    y_offset += 10
+
+    # 요약 텍스트 그리기 (구분선 아래)
+    for line in summary_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=title_font)
         text_width = text_bbox[2] - text_bbox[0]
-        text_x = (width - text_width) // 2
-        draw.text((text_x, text_y), line, font=font, fill='black')
-        text_y += text_bbox[3] - text_bbox[1] + line_spacing
+        x = (width - text_width) // 2
+        draw.text((x, y_offset), line, font=title_font, fill='black')
+        y_offset += text_bbox[3] - text_bbox[1] + 5
 
     return new_img
 
@@ -494,7 +533,7 @@ def apply_new_background(input_image_path, background_image_path):
 # 비동기 이미지 생성 함수
 #이미지 경로받기
 async def create_background(background_image_path):
-    img_path = os.path.join(background_image_path, "back")  # 배경 이미지 경로
+    img_path = os.path.join(background_image_path, "back.png")  # 확장자 .png 추가
     prompt = "Simple background"
     dynamic_seed = torch.randint(0, 2**32, (1,), dtype=torch.int64).item()  # 동적 시드 생성
     
@@ -510,7 +549,7 @@ async def create_background(background_image_path):
     
     background = background.convert("RGB")  # RGB로 변환
     background = background.resize((512, 512))  # 배경 크기 변경
-    background.save(img_path)  # 이미지 저장
+    background.save(img_path, format="PNG")  # 이미지 저장 시 format 지정
     
     return img_path  # 생성된 이미지 경로 리턴
 def delete_image(image_filename, background):
