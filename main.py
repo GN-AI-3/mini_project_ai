@@ -73,11 +73,11 @@ embedding_model_instance = SentenceTransformer('sentence-transformers/paraphrase
 
 # Stable Diffusion 모델 로딩
 pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
-pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
+pipe.to("cpu")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
 
 # 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
 makeImage = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
-makeImage.to("cuda") 
+makeImage.to("cpu") 
 
 # MediaPipe Selfie Segmentation 설정
 mp_selfie_segmentation = mp.solutions.selfie_segmentation
@@ -385,12 +385,12 @@ def image_process(image_path: str):
     image = image.resize((512, 512))
 
     # 카툰화 효과를 위한 프롬프트
-    prompt = "Randomly transformed cartoon image with unique features and playful details."
+    prompt = "A playful and creatively cartoonish rendition of the original image with vibrant colors and exaggerated features. "
     
     result = pipe(
         prompt=prompt,
         image=image,
-        strength=0.6,  # 변환 강도 조절 (0.0 ~ 1.0)
+        strength=0.8,  # 변환 강도 조절 (0.0 ~ 1.0)
         guidance_scale=8,  # 프롬프트 영향력
         num_inference_steps=50  # 변환 단계 수
     ).images[0]
