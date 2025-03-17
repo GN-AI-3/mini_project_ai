@@ -72,8 +72,13 @@ face_model.prepare(ctx_id=0)
 embedding_model_instance = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
 
 # Stable Diffusion 모델 로딩
-pipe = StableDiffusionImg2ImgPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
-pipe.to("cpu")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
+pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float16
+)
+# LoRA 가중치 로드 (Portrait Sketch Style LoRA)
+pipe.load_lora_weights(".", weight_name="sketch_sumiao.safetensors")
+pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
 
 # 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
 makeImage = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5", torch_dtype=torch.float16)
@@ -134,7 +139,7 @@ async def process_pdf(
         # 장/단점 요약
         start_time = time.time()
         title, description, score = get_most_similar_sentence(analysis_result["장점"][0] if analysis_result["장점"] else "")
-        summarized_text = f"{title}\n{description}"
+        summarized_text = f"{description}\n{title}"
         end_time = time.time()
         print("장/단점 요약 결과:", summarized_text)
         print(f"장/단점 요약 시간: {end_time - start_time}초")
@@ -151,7 +156,10 @@ async def process_pdf(
             )
         background = await create_background(os.path.dirname(face_jpg_path))  # 배경 생성
         # analysis_result를 문자열로 변환
-        plantext_str = "\n".join(analysis_result["장점"])
+        # 장점 텍스트를 구어체로 변환
+        converted_texts = text_to_speech(analysis_result["장점"])
+        # 변환된 텍스트에 번호를 붙이고 들여쓰기 추가
+        plantext_str = "\n\n".join([f"- {text}" for text in converted_texts])
         img = get_image(image_path=face_jpg_path, background=background, text=plantext_str, plantext=summarized_text)
 
         # 최종 이미지를 faces 폴더에 저장
@@ -383,21 +391,23 @@ def text_to_speech(
 def image_process(image_path: str):
     image = Image.open(image_path)
     image = image.resize((512, 512))
-
-    # 카툰화 효과를 위한 프롬프트
-    prompt = "A playful and creatively cartoonish rendition of the original image with vibrant colors and exaggerated features. "
     
     result = pipe(
-        prompt=prompt,
+        prompt="sketch, sumiao, black and white style",  # 필수 트리거 워드와 권장 워드
         image=image,
-        strength=0.8,  # 변환 강도 조절 (0.0 ~ 1.0)
-        guidance_scale=8,  # 프롬프트 영향력
-        num_inference_steps=50  # 변환 단계 수
+        strength=0.7,  # 권장 범위 0.7~1.0 내에서 설정
+        guidance_scale=3.0,
+        num_inference_steps=30,
+        cross_attention_kwargs={"scale": 0.4}  # LoRA 가중치를 0.8로 설정
     ).images[0]
+    
+    # 흰색 배경 생성
+    white_bg = Image.new('RGB', result.size, color='white')
+    white_bg.paste(result, (0, 0))
     
     # 결과 이미지를 임시 파일로 저장
     temp_path = os.path.join(os.path.dirname(image_path), "temp_cartoon.png")
-    result.save(temp_path)
+    white_bg.save(temp_path, format="PNG")
     
     return temp_path
 
@@ -411,128 +421,266 @@ def get_image(
     # 1. 이미지 카툰화
     cartoon_image = image_process(image_path)
     
-    # 2. 배경 변경
-    apply_background = apply_new_background(image_path, background)
+    # 흰색 배경 생성 (512x512)
+    white_bg = Image.new('RGB', (512, 512), color='white')
     
-    # 3. 카툰화된 이미지와 배경 합성
-    final_image = apply_new_background(cartoon_image, background)
+    # 카툰화된 이미지 불러오기
+    cartoon = Image.open(cartoon_image)
     
-    # 4. 텍스트를 이미지 하단에 추가
-    cartoon_image_with_text = add_text_below_image(final_image, text, plantext)
+    # 이미지 크기 조정 (배경의 70%로 설정)
+    target_width = int(512 * 0.7)  # 배경 너비의 70%
+    target_height = int(target_width * cartoon.size[1] / cartoon.size[0])  # 비율 유지
+    
+    # 높이가 너무 크면 조정
+    max_height = int(512 * 0.4)  # 전체 높이의 40%로 제한
+    if target_height > max_height:
+        target_height = max_height
+        target_width = int(target_height * cartoon.size[0] / cartoon.size[1])
+    
+    cartoon = cartoon.resize((target_width, target_height))
+    
+    # 이미지를 상단에 배치 (위쪽 여백 좁게)
+    x_offset = (512 - target_width) // 2
+    y_offset = 40  # 상단에서 40px 아래에 배치
+    
+    # 이미지 합성
+    white_bg.paste(cartoon, (x_offset, y_offset))
+    
+    # 4. 텍스트를 이미지 하단에 추가 (실제 이미지 높이 전달)
+    actual_image_height = y_offset + target_height + 70  # 실제 이미지 높이 + 여백
+    cartoon_image_with_text = add_text_below_image(white_bg, text, plantext, actual_image_height)
     return cartoon_image_with_text
 
 
 # 텍스트를 최대 너비에 맞춰 분할하는 함수
 def wrap_text(draw, font, text, max_width):
     lines = []
-    words = text.split(' ')
-    current_line = ""
-    for word in words:
-        test_line = current_line + " " + word if current_line else word
-        test_bbox = draw.textbbox((0, 0), test_line, font=font)
-        test_width = test_bbox[2] - test_bbox[0]
-        if test_width <= max_width:
-            current_line = test_line
-        else:
+    # 먼저 텍스트를 줄바꿈 문자로 분리
+    paragraphs = text.split('\n')
+    
+    for paragraph in paragraphs:
+        if not paragraph.strip():  # 빈 줄 처리
+            lines.append('')
+            continue
+            
+        words = paragraph.split(' ')
+        current_line = ""
+        
+        for word in words:
+            test_line = current_line + " " + word if current_line else word
+            test_bbox = draw.textbbox((0, 0), test_line, font=font)
+            test_width = test_bbox[2] - test_bbox[0]
+            
+            if test_width <= max_width:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+                
+        if current_line:
             lines.append(current_line)
-            current_line = word
-    if current_line:
-        lines.append(current_line)
+            
     return lines
 
 # 택스트 추가 이미지 생성
-def add_text_below_image(input_image, text, plantext):
+def add_text_below_image(input_image, text, plantext, actual_image_height):
     img = input_image
     try:
-        # 제목용 폰트 (더 큰 크기)
-        title_font = ImageFont.truetype("fonts/malgun.ttf", 14)
-        # 본문용 폰트 (더 작은 크기)
-        body_font = ImageFont.truetype("fonts/malgun.ttf", 28)
+        # 제목용 폰트 (가장 큰 크기)
+        main_title_font = ImageFont.truetype("park.ttf", 36)  # 34 -> 36
+        # 설명용 폰트 (중간 크기)
+        description_font = ImageFont.truetype("park.ttf", 24)  # 22 -> 24
+        # 본문용 폰트 (가장 작은 크기)
+        body_font = ImageFont.truetype("park.ttf", 18)  # 16 -> 18
+        # 상단 제목용 폰트
+        top_title_font = ImageFont.truetype("park.ttf", 36)  # 34 -> 36
     except IOError:
-        title_font = ImageFont.load_default()
+        main_title_font = ImageFont.load_default()
+        description_font = ImageFont.load_default()
         body_font = ImageFont.load_default()
+        top_title_font = ImageFont.load_default()
+        print("폰트 파일을 불러오는데 실패했습니다. 기본 폰트를 사용합니다.")
 
     width, height = img.size
-    draw = ImageDraw.Draw(img)
-
-    # 장점 텍스트(plantext)를 줄 단위로 분리
-    max_width = width * 0.9  # 양옆에 여유를 두기 위해 90%로 설정
-    plan_lines = wrap_text(draw, body_font, plantext, max_width)
-
-    # 장점 텍스트의 높이 계산
-    plan_height = 0
-    for line in plan_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=body_font)
-        line_height = text_bbox[3] - text_bbox[1]
-        plan_height += line_height + 3  # 줄 간격 3px 추가
-
-    # 요약 텍스트(text)를 이미지 하단에 추가
-    summary_lines = wrap_text(draw, title_font, text, max_width)
-
-    # 요약 텍스트의 높이 계산
-    summary_height = 0
-    for line in summary_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=title_font)
-        line_height = text_bbox[3] - text_bbox[1]
-        summary_height += line_height + 5  # 줄 간격 5px 추가
-
-    # 새로운 높이 계산 (기존 이미지 + 여백 + 장점 텍스트 + 구분선 + 요약 텍스트)
-    new_height = height + 20 + plan_height + 20 + summary_height + 20
-    new_img = Image.new('RGB', (width, new_height), color='white')
-    new_img.paste(img, (0, 0))
-
+    
+    # 상단 제목을 위한 추가 공간 확보 (간격 축소)
+    top_title = "그 때의 나는?"
+    top_title_bbox = ImageDraw.Draw(img).textbbox((0, 0), top_title, font=top_title_font)
+    top_title_height = top_title_bbox[3] - top_title_bbox[1] + 20  # 여백 축소
+    
+    # 새로운 이미지 생성 (흰색 배경)
+    new_img = Image.new('RGB', (width, height + top_title_height), color='white')
+    new_img.paste(img, (0, top_title_height))  # 기존 이미지를 아래로 이동
+    
     draw = ImageDraw.Draw(new_img)
     
-    # 장점 텍스트 그리기 (이미지 바로 아래)
-    y_offset = height + 20  # 기존 이미지 아래 20px 여백
+    # 상단 제목 그리기 (검정색)
+    title_x = (width - (top_title_bbox[2] - top_title_bbox[0])) // 2  # 가운데 정렬
+    draw.text((title_x, 10), top_title, font=top_title_font, fill='black')
+
+    # plantext에서 description과 title 분리 (순서 변경)
+    description, title = plantext.split('\n', 1)
+
+    # description과 title을 이미지 하단에 추가
+    max_width = width * 0.85  # 들여쓰기를 위해 약간 줄임
+    
+    # description 줄바꿈 처리 (먼저)
+    description_lines = wrap_text(draw, description_font, description, max_width)
+    # title 줄바꿈 처리 (나중에)
+    title_lines = wrap_text(draw, main_title_font, title, max_width)
+
+    # title과 description의 높이 계산
+    title_height = 0
+    for line in title_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=main_title_font)
+        line_height = text_bbox[3] - text_bbox[1]
+        title_height += line_height + 5
+
+    description_height = 0
+    for line in description_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=description_font)
+        line_height = text_bbox[3] - text_bbox[1]
+        description_height += line_height + 5
+
+    # 장점 텍스트(text)를 줄 단위로 분리
+    plan_lines = []
+    current_item_lines = []
+    
+    for line in text.split('\n'):
+        if line.strip().startswith('-'):  # '-'로 시작하는 줄 처리
+            if current_item_lines:
+                plan_lines.extend(current_item_lines)
+                plan_lines.append('')  # 항목 사이에 빈 줄 추가
+                current_item_lines = []
+            
+            # 새로운 항목 줄 처리
+            wrapped = wrap_text(draw, body_font, line, max_width)
+            current_item_lines.extend(wrapped)
+        else:
+            # 들여쓰기된 텍스트 처리
+            indented_width = max_width - 40
+            wrapped = wrap_text(draw, body_font, line, indented_width)
+            current_item_lines.extend(['    ' + wline for wline in wrapped])
+    
+    # 마지막 아이템의 줄들을 추가
+    if current_item_lines:
+        plan_lines.extend(current_item_lines)
+
+    # 장점 텍스트의 높이 계산 (빈 줄 포함)
+    plan_height = 0
     for line in plan_lines:
+        if line.strip():  # 내용이 있는 줄
+            text_bbox = draw.textbbox((0, 0), line, font=body_font)
+            line_height = text_bbox[3] - text_bbox[1]
+            plan_height += line_height + 8
+        else:  # 빈 줄
+            plan_height += 15
+
+    # 새로운 높이 계산 (간격 축소)
+    final_height = actual_image_height + 5 + title_height + 15 + description_height + 20 + plan_height + 20  # 불필요한 여백 제거
+    final_img = Image.new('RGB', (width, final_height), color='white')
+    final_img.paste(new_img, (0, 0))
+
+    draw = ImageDraw.Draw(final_img)
+    
+    # description 그리기 (이미지 바로 아래)
+    y_offset = actual_image_height + 5  # 실제 이미지 높이를 기준으로 시작
+    
+    # description 그리기 (중간 크기 글씨, 가운데 정렬)
+    for line in description_lines:
+        text_bbox = draw.textbbox((0, 0), line, font=description_font)
+        line_width = text_bbox[2] - text_bbox[0]
+        x = (width - line_width) // 2  # 가운데 정렬을 위한 x 좌표 계산
+        line_height = text_bbox[3] - text_bbox[1]
+        draw.text((x, y_offset), line, font=description_font, fill='black')
+        y_offset += line_height + 5
+
+    y_offset += 20  # description과 title 사이 간격 증가
+
+    # title 그리기 (가장 큰 글씨, 가운데 정렬)
+    for line in title_lines:
+        # 쌍따옴표 추가
+        line_with_quotes = f'"{line}"'
+        text_bbox = draw.textbbox((0, 0), line_with_quotes, font=main_title_font)
+        line_width = text_bbox[2] - text_bbox[0]
+        x = (width - line_width) // 2  # 가운데 정렬을 위한 x 좌표 계산
+        line_height = text_bbox[3] - text_bbox[1]
+        draw.text((x, y_offset), line_with_quotes, font=main_title_font, fill='black')
+        y_offset += line_height + 5
+
+    # 구분선 추가 (검정색)
+    y_offset += 15  # 구분선 위 여백
+    draw.line([(width * 0.1, y_offset), (width * 0.9, y_offset)], fill='black', width=1)
+    y_offset += 15  # 구분선 아래 여백
+
+    # 장점 텍스트 그리기 (가장 작은 글씨)
+    for line in plan_lines:
+        if not line.strip():  # 빈 줄
+            y_offset += 15  # 번호 사이 간격 증가 (10 -> 15)
+            continue
+            
         text_bbox = draw.textbbox((0, 0), line, font=body_font)
-        text_width = text_bbox[2] - text_bbox[0]
-        x = (width - text_width) // 2
+        line_height = text_bbox[3] - text_bbox[1]
+        if line.startswith('    '):
+            # 들여쓰기가 있는 줄
+            x = width * 0.1 + 20  # 기본 여백 + 추가 들여쓰기
+        else:
+            # 번호가 있는 줄
+            x = width * 0.1
         draw.text((x, y_offset), line, font=body_font, fill='black')
-        y_offset += text_bbox[3] - text_bbox[1] + 3
+        y_offset += line_height + 8  # 줄간격 증가 (3 -> 8)
 
-    # 구분선 추가
-    y_offset += 10
-    draw.line([(width * 0.1, y_offset), (width * 0.9, y_offset)], fill='gray', width=1)
-    y_offset += 10
-
-    # 요약 텍스트 그리기 (구분선 아래)
-    for line in summary_lines:
-        text_bbox = draw.textbbox((0, 0), line, font=title_font)
-        text_width = text_bbox[2] - text_bbox[0]
-        x = (width - text_width) // 2
-        draw.text((x, y_offset), line, font=title_font, fill='black')
-        y_offset += text_bbox[3] - text_bbox[1] + 5
-
-    return new_img
+    return final_img
 
 # 사람 특정해서 배경 변경 
 def apply_new_background(input_image_path, background_image_path):
     # 입력 이미지와 배경 이미지를 파일 경로로 열기
     input_image = Image.open(input_image_path).convert("RGB")  # RGB 모드로 열기
     background_image = Image.open(background_image_path).convert("RGB")  # RGB 모드로 열기
-    # PIL 이미지를 NumPy 배열로 변환 (OpenCV에서 사용하기 위해)
+
+    # 배경 이미지 크기
+    bg_width, bg_height = background_image.size
+    
+    # 입력 이미지 크기 조정 (원본의 70%로 축소)
+    person_width = int(bg_width * 0.7)
+    person_height = int(person_width * input_image.size[1] / input_image.size[0])  # 비율 유지
+    input_image = input_image.resize((person_width, person_height))
+    
+    # PIL 이미지를 NumPy 배열로 변환
     image_rgb = cv2.cvtColor(np.array(input_image), cv2.COLOR_RGB2BGR)
+    background_rgb = cv2.cvtColor(np.array(background_image), cv2.COLOR_RGB2BGR)
+
     with mp_selfie_segmentation.SelfieSegmentation(model_selection=1) as selfie_segmentation:
         # 사람을 구분하기 위한 Segmentation 처리
         result = selfie_segmentation.process(image_rgb)
         condition = result.segmentation_mask > 0.5  # 사람 부분만 추출
-        # 배경을 흰색으로 설정
-        image_no_bg = image_rgb.copy()
-        image_no_bg[~condition] = 255  # 배경을 흰색으로
-        # 배경 이미지를 OpenCV 형태로 변환
-        background_resized = cv2.cvtColor(np.array(background_image), cv2.COLOR_RGB2BGR)
-        new_background_resized = cv2.resize(background_resized, (image_rgb.shape[1], image_rgb.shape[0]))
-        # 사람 부분은 원본 이미지에서, 배경 부분은 새로운 배경으로 설정
-        final_image = np.where(condition[:, :, None], image_rgb, new_background_resized)
+
+        # 배경을 투명하게 만들기
+        person_rgba = np.zeros((person_height, person_width, 3), dtype=np.uint8)
+        person_rgba = np.where(condition[:, :, None], image_rgb, [255, 255, 255])
+
+        # 배경 이미지에 사람 이미지 합성
+        # 사람 이미지를 배경 이미지의 중앙 하단에 위치시킴
+        x_offset = (bg_width - person_width) // 2
+        y_offset = bg_height - person_height  # 하단 정렬
+
+        # 합성할 영역 생성
+        composite = background_rgb.copy()
+        composite[y_offset:y_offset + person_height, x_offset:x_offset + person_width] = np.where(
+            condition[:, :, None],
+            person_rgba,
+            background_rgb[y_offset:y_offset + person_height, x_offset:x_offset + person_width]
+        )
+
         # 결과 이미지를 PIL 객체로 변환
-        final_image_pil = Image.fromarray(cv2.cvtColor(final_image, cv2.COLOR_BGR2RGB))
+        final_image_pil = Image.fromarray(cv2.cvtColor(composite, cv2.COLOR_BGR2RGB))
         return final_image_pil
 
 # 비동기 이미지 생성 함수
 #이미지 경로받기
 async def create_background(background_image_path):
+    """
+    # 원래 코드 (주석 처리)
     img_path = os.path.join(background_image_path, "back.png")  # 확장자 .png 추가
     prompt = "Simple background"
     dynamic_seed = torch.randint(0, 2**32, (1,), dtype=torch.int64).item()  # 동적 시드 생성
@@ -550,6 +698,12 @@ async def create_background(background_image_path):
     background = background.convert("RGB")  # RGB로 변환
     background = background.resize((512, 512))  # 배경 크기 변경
     background.save(img_path, format="PNG")  # 이미지 저장 시 format 지정
+    """
+    
+    # 흰색 배경 이미지 생성
+    white_bg = Image.new('RGB', (512, 512), color='white')
+    img_path = os.path.join(background_image_path, "back.png")
+    white_bg.save(img_path, format="PNG")
     
     return img_path  # 생성된 이미지 경로 리턴
 def delete_image(image_filename, background):
