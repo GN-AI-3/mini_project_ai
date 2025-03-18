@@ -76,8 +76,8 @@ pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
     "runwayml/stable-diffusion-v1-5",
     torch_dtype=torch.float16
 )
-# LoRA 가중치 로드 (Portrait Sketch Style LoRA)
-pipe.load_lora_weights(".", weight_name="sketch_sumiao.safetensors")
+# LoRA 가중치 로드 (Drawing Lesson LoRA)
+pipe.load_lora_weights(".", weight_name="Drawing_Lesson.safetensors")
 pipe.to("cuda")  # CUDA(GPU)가 있다면 이를 사용하여 속도를 향상시킴
 
 # 모델 로드: 이미지 생성 stable-diffusion-v1-5 모델 사용 (torch.float16으로 설정하여 속도 향상)
@@ -393,12 +393,13 @@ def image_process(image_path: str):
     image = image.resize((512, 512))
     
     result = pipe(
-        prompt="sketch, sumiao, black and white style",  # 필수 트리거 워드와 권장 워드
+        prompt="drawing lesson, sketch art, black and white",  # 필수 트리거 워드와 스타일 지정
+        negative_prompt="color, realistic, photographic",
         image=image,
-        strength=0.7,  # 권장 범위 0.7~1.0 내에서 설정
-        guidance_scale=3.0,
-        num_inference_steps=30,
-        cross_attention_kwargs={"scale": 0.4}  # LoRA 가중치를 0.8로 설정
+        strength=0.6,  # 변환 강도
+        guidance_scale=7.0,
+        num_inference_steps=80,
+        cross_attention_kwargs={"scale": 0.9}  # LoRA 가중치
     ).images[0]
     
     # 흰색 배경 생성
