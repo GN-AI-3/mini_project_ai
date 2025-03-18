@@ -124,7 +124,7 @@ async def process_pdf(
     try:
         # 추출된 텍스트를 문장 단위로 분리
         start_time = time.time()
-        sentences = text_split(combined_text)
+        sentences, name = text_split(combined_text)
         end_time = time.time()
         print("텍스트 분리 결과:", sentences)  # 리스트를 직접 출력
         print(f"텍스트 분리 시간: {end_time - start_time}초")
@@ -185,7 +185,8 @@ async def process_pdf(
             content={
                 "message": "PDF 처리 및 분석이 성공적으로 완료되었습니다",
                 "advantages": analysis_result["장점"],
-                "image": image_base64  # base64로 인코딩된 이미지
+                "image": image_base64,  # base64로 인코딩된 이미지
+                "name": name
             },
             status_code=200
         )
@@ -274,6 +275,14 @@ def remove_before_second_keyword(text: str, keyword: str) -> str:
 
 # 추출된 텍스트 문장 단위로 구분 및 불필요한 문자 제거
 def text_split(text: str):  
+    # 신청인 이름 추출
+    name = None
+    applicant_pattern = r'신청인: ([^)]+)'
+    applicant_match = re.search(applicant_pattern, text)
+    if applicant_match:
+        name = applicant_match.group(1).strip()
+        print("신청인 이름:", name)
+    
     # 먼저 특정 패턴만 삭제
     patterns = [
         r'\b학년\b',
@@ -311,7 +320,7 @@ def text_split(text: str):
     print("corrected_text : ", corrected_text)
 
     sentences = kss.split_sentences(corrected_text)
-    return [sentence.strip() for sentence in sentences if sentence.strip()]
+    return [sentence.strip() for sentence in sentences if sentence.strip()], name
 
 # 문장 단위로 구분된 텍스트 장/단점 구분
 def text_prosCons(
