@@ -91,7 +91,7 @@ mp_selfie_segmentation = mp.solutions.selfie_segmentation
 # 
 #######################################################################################################
 
-@app.post("/process-pdf/")
+@app.post("/process-pdf")
 async def process_pdf(
     file: UploadFile = File(...)
 ):
